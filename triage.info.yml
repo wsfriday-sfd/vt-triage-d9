@@ -1,0 +1,12 @@
+name: Triage
+description: Triage System for Drupal 8
+package: Triage
+type: module
+version: 1.0
+core: 8.x
+core_version_requirement: ^8 || ^9
+dependencies:
+  - options
+  - htmlawed
+'interface translation project': triage
+'interface translation server pattern': 'modules/custom/triage/translations/%language.po'

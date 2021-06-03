@@ -1,0 +1,26 @@
+triage.triageconfig:
+  route_name: triage.triageconfig
+  base_route: entity.node.canonical
+  title: 'Triage Configuration'
+triage.actions:
+  route_name: triage.actions
+  base_route: entity.term.canonical
+  title: 'Triage Action Builder'
+triage.node.actions:
+  route_name: triage.node.actions
+  base_route: entity.node.canonical
+  title: 'Triage Action Builder'
+triage.node.build:
+  route_name: triage.node.actions
+  parent_id: triage.node.actions
+  title: 'Triage Pre-Question Builder'
+triage.node.quest:
+  route_name: triage.node.quest
+  parent_id: triage.node.actions
+  title: 'Triage Help Builder'
+triage.node.help:
+  route_name: triage.node.help
+  parent_id: triage.node.actions
+  title: 'Triage Output Builder'
+
+

@@ -1,0 +1,2306 @@
+<?php
+
+
+use Drupal\Core\Database\Database;
+use Drupal\Core\Ajax\AjaxResponse;
+use Drupal\Core\Ajax\HtmlCommand;
+use Drupal\taxonomy\Entity\Vocabulary;
+use Drupal\Core\Render\Markup;
+use Symfony\Component\HttpFoundation\RedirectResponse;
+
+require_once DRUPAL_ROOT . '/' . drupal_get_path('module', 'triage') . '/includes/triage_actions.inc';
+require_once DRUPAL_ROOT . '/' . drupal_get_path('module', 'triage') . '/includes/triage.orgsearch.inc';
+require_once DRUPAL_ROOT . '/' . drupal_get_path('module', 'triage') . '/includes/triage.pages.inc';
+
+function triage_cron() {
+  $con = Database::getConnection();
+  if (!\Drupal::database()->schema()->tableExists('pov_info')) {
+    $record_keep_table = 'pov_info';
+    $schema = [
+      'fields' => [
+        'id' => ['type' => 'serial', 'not null' => TRUE],
+        'year' => ['type' => 'varchar', 'length' => 4, 'not null' => FALSE],
+        'h1' => ['type' => 'int', 'length' => 11, 'not null' => FALSE],
+        'h2' => ['type' => 'int', 'length' => 11, 'not null' => FALSE],
+        'h3' => ['type' => 'int', 'length' => 11, 'not null' => FALSE],
+        'h4' => ['type' => 'int', 'length' => 11, 'not null' => FALSE],
+        'h5' => ['type' => 'int', 'length' => 11, 'not null' => FALSE],
+        'h6' => ['type' => 'int', 'length' => 11, 'not null' => FALSE],
+        'h7' => ['type' => 'int', 'length' => 11, 'not null' => FALSE],
+        'h8' => ['type' => 'int', 'length' => 11, 'not null' => FALSE],
+        'extra' => ['type' => 'int', 'length' => 11, 'not null' => FALSE],
+      ],
+      'primary key' => ['id'],
+    ];
+    \Drupal::database()->schema()->createTable($record_keep_table, $schema);
+  }
+  $config = \Drupal::service('config.factory')->getEditable('triage.pov');
+  $url = "https://www.statesidelegal.org/documents/currentGuidelines.js";
+  $session = curl_init($url);
+  curl_setopt($session, CURLOPT_RETURNTRANSFER, TRUE);
+  $data = curl_exec($session);
+  if ($data) {
+    $len = strpos($data, "var cyear");
+    $year = substr($data, $len);
+    $year = str_replace("var cyear = ", "", $year);
+    $year = intval(str_replace('"', '', $year));
+    $vals = explode("-", str_replace('var cguide = "', '', substr($data, 0, $len)));
+    for ($x = 9; $x <= 20; $x++) {
+      $vals[$x] = $vals[$x - 1] + $vals[0];
+    }
+    $config
+      ->set('triage', 'triage')
+      ->set('pov', $vals)
+      ->save();
+    $find = $con->query("select year from pov_info where year=:yr", [":yr" => $year])
+      ->fetchColumn();
+    if (!$find) {
+      $query = $con->insert('pov_info');
+      $query->fields([
+        'year' => $year,
+        'h1' => $vals[1],
+        'h2' => $vals[2],
+        'h3' => $vals[3],
+        'h4' => $vals[4],
+        'h5' => $vals[5],
+        'h6' => $vals[6],
+        'h7' => $vals[7],
+        'h8' => $vals[8],
+        'extra' => $vals[0],
+      ]);
+      $query->execute();
+    }
+  }
+  curl_close($session);
+}
+
+function triage_write_history() {
+  $con = Database::getConnection();
+  $tempstore = \Drupal::service('tempstore.private')->get('triage');
+  $start = $tempstore->get('time_start');
+  $end = $tempstore->get('time_end');
+  if (is_null($start) || $start === 0) {
+    $start = time();
+  }
+  if (is_null($end) || $end === 0) {
+    $end = time();
+  }
+  $ssid = session_id();
+  $pov = triage_percent_pov();
+  $score = 0;
+  $steps = 0;
+  $intake_elig = $tempstore->get('triage_intake_elig');
+  $author = $tempstore->get('triage_who_is');
+  if (!isset($_COOKIE['triage_hist'])) {
+    setcookie('triage_hist', '', time() + (86400 * 30), "/");
+    $_COOKIE['triage_hist'] = '';
+  }
+  if (!isset($_COOKIE['triage_last'])) {
+    setcookie('triage_last', '', time() + (86400 * 30), "/");
+    $_COOKIE['triage_last'] = '';
+  }
+  if (!isset($_COOKIE['triage_last_tid'])) {
+    setcookie('triage_last_tid', '', time() + (86400 * 30), "/");
+    $_COOKIE['triage_last_tid'] = '';
+  }
+  if (!isset($_COOKIE['triage_completed'])) {
+    setcookie('triage_completed', 0, time() + (86400 * 30), "/");
+    $_COOKIE['triage_completed'] = 0;
+  }
+
+  $hs = intval($tempstore->get('my_house_size'));
+  if (is_null($hs) || !isset($hs)) {
+    $hs = 0;
+  }
+  if (!is_int($hs)) {
+    $hs = 0;
+  }
+  $inc = intval($tempstore->get('my_house_income'));
+  if (is_null($inc)) {
+    $inc = 0;
+  }
+  if (!is_int($inc)) {
+    $inc = 0;
+  }
+  $bnk = intval($tempstore->get('triage_bank_amt'));
+  if (is_null($bnk)) {
+    $bnk = 0;
+  }
+  $email = $tempstore->get('triage_email');
+  if ($email) {
+    $tempstore->set('triage_email', 0);
+  }
+  $county = $tempstore->get('my_county');
+  if (is_null($county)) {
+    $county = '';
+  }
+  $ts = "";
+  $bentext = '';
+  $factext = '';
+  if (triage_is_form_used('triage_status_form')) {
+    $vals = $tempstore->get('triage_status');
+    $ts = triage_tax_list($vals);
+  }
+  if (triage_is_form_used('triage_income_form')) {
+    $vals = $tempstore->get('my_benefits');
+    $bentext = triage_tax_list($vals);
+  }
+  if (triage_is_form_used('triage_followup_form')) {
+    $vals = $tempstore->get('factors');
+    $factext = triage_tax_list($vals);
+  }
+  $tid = 0;
+  $other_cat = '';
+  if (is_numeric($_COOKIE['triage_last_tid'])) {
+    $tid = $_COOKIE['triage_last_tid'];
+    $qry = $con->select('taxonomy_term__field_triage_extra', 'e');
+    $qry->addField('e', 'field_triage_extra_value');
+    $qry->condition('e.entity_id', $tid);
+    $other_cat = $qry->execute()->fetchColumn();
+  }
+  if (!$other_cat) {
+    $other_cat = '';
+  }
+  $help = '';
+  if ($tempstore->get('triage_kind_of_help')) {
+    $help_name = $tempstore->get('triage_kind_of_help');
+    $help = \Drupal::entityTypeManager()
+      ->getStorage('taxonomy_term')
+      ->loadByProperties(['name' => $help_name]);
+  }
+  if (isset($_COOKIE['triage_current_step'])) {
+    $steps = $_COOKIE['triage_current_step'];
+  }
+  $thisvid = $tempstore->get('triage_current_voc');
+  if ($thisvid == '') {
+    $thisvid = 0;
+  }
+  $qry = $con->select('triage_log', 'l');
+  $qry->addField('l', 'id');
+  $qry->condition('l.ssid', $ssid);
+  $logid = $qry->execute()->fetchColumn();
+  $thishist = $tempstore->get('triage_history');
+  $thishist = str_replace('[object Object]', '', $thishist);
+  if ($logid > 0) {
+    $qry = $con->select('triage_log', 'l');
+    $qry->fields('l');
+    $qry->condition('l.ssid', $ssid);
+    $curr = $qry->execute()->fetchAssoc();
+    $query = $con->update('triage_log');
+    $query->fields([
+      'ip' => Drupal::request()->getClientIp(),
+      'vid' => $thisvid,
+      'history' => $thishist,
+      'time' => $start,
+      'time_end' => $end,
+      'steps' => max($curr['steps'], $steps),
+      'last_stop' => $tempstore->get('triage_last_stop'),
+      'completed' => max($curr['completed'], $_COOKIE['triage_completed']),
+      'non_service_area' => $tempstore->get('triage_non_service_area'),
+      'zipcode' => $tempstore->get('my_zip'),
+      'county' => $county,
+      'state' => triage_fix_states($tempstore->get('my_state')),
+      'household' => $hs,
+      'status' => $ts,
+      'income' => $inc,
+      'pov' => $pov,
+      'bank' => $bnk,
+      'tid' => $tid,
+      'other_cat' => $other_cat,
+      'intake_elig' => $intake_elig,
+      'email' => $email,
+      'help' => $help,
+      'benefits' => $bentext,
+      'factors' => $factext,
+      'aggregate' => $score,
+      'author' => $author,
+    ]);
+    $query->condition('ssid', $ssid);
+    $query->execute();
+  }
+  else {
+    $query = $con->insert('triage_log');
+    $query->fields([
+      'ip' => Drupal::request()->getClientIp(),
+      'vid' => $thisvid,
+      'history' => $thishist,
+      'time' => $start,
+      'time_end' => $end,
+      'steps' => $steps,
+      'last_stop' => $tempstore->get('triage_last_stop'),
+      'completed' => $_COOKIE['triage_completed'],
+      'non_service_area' => $tempstore->get('triage_non_service_area'),
+      'zipcode' => $tempstore->get('my_zip'),
+      'county' => $tempstore->get('my_county'),
+      'state' => triage_fix_states($tempstore->get('my_state')),
+      'household' => $hs,
+      'status' => $ts,
+      'income' => $inc,
+      'pov' => $pov,
+      'bank' => $bnk,
+      'tid' => $tid,
+      'ssid' => $ssid,
+      'other_cat' => $other_cat,
+      'intake_elig' => $intake_elig,
+      'email' => $email,
+      'help' => $help,
+      'benefits' => $bentext,
+      'factors' => $factext,
+      'aggregate' => $score,
+      'author' => $author,
+    ]);
+    $query->execute();
+  }
+  triage_clear_log();
+  return;
+}
+
+function triage_clear_log($all = FALSE) {
+  $tempstore = \Drupal::service('tempstore.private')->get('triage');
+  $tempstore->set('triage_total_steps', 0);
+  $tempstore->set('triage_direct_nid', 0);
+  $tempstore->set('triage_email', 0);
+  $tempstore->set('triage_last_stop', '');
+  $tempstore->set('triage_in_questions', NULL);
+  setcookie('triage_current_step', 0, time() + (86400 * 30), "/");
+  setcookie('triage_completed', 0, time() + (86400 * 30), "/");
+  setcookie('triage_last', 0, time() + (86400 * 30), "/");
+  $tempstore->set('time_start', 0);
+  $tempstore->set('time_end', 0);
+}
+
+function ta_variable_get($name = NULL, $default = NULL, $nid = 0) {
+  global $ta_conf;
+  if (is_null($ta_conf)) {
+    triage_set_variables();
+  }
+  if (is_null($name) || is_null($default)) {
+    return '';
+  }
+  return isset($ta_conf[$nid][$name]) ? $ta_conf[$nid][$name] : $default;
+}
+
+function triage_page_attachments(array &$page) {
+  $path = \Drupal::service('path.current')->getPath();
+  if (strpos($path, '/triage') === 0) {
+    $page['#attached']['library'][] = 'triage/triage';
+  }
+}
+
+/**
+ * @param $name
+ * @param $value
+ * @param int $nid
+ */
+function ta_variable_set($name, $value, $nid = 0) {
+  global $ta_conf;
+  $val = serialize($value);
+  $con = Database::getConnection();
+  $qry = $con->select('ta_variable', 't');
+  $qry->addField('t', 'name');
+  $qry->condition('t.name', $name);
+  $qry->condition('t.nid', $nid);
+  $find = $qry->execute()->fetchCol();
+  if ($find) {
+    $val = serialize($value);
+    $num_updated = $con->update('ta_variable')
+      ->fields(['value' => $val])
+      ->condition('name', $name)
+      ->condition('nid', $nid)
+      ->execute();
+  }
+  else {
+    $val = serialize($value);
+    try {
+      $num_updated = $con->insert('ta_variable')
+        ->fields([
+            'value' => $val,
+            'nid' => $nid,
+            'name' => $name,
+          ]
+        )
+        ->execute();
+    } catch (Exception $e) {
+    }
+  }
+  $ta_conf[$nid][$name] = $value;
+}
+
+function triage_preprocess_html(&$variables) {
+  $termname = "";
+  $termtid = 0;
+  $tempstore = \Drupal::service('tempstore.private')->get('triage');
+  $use_pop = $tempstore->get('use_pop');
+  if( is_null($use_pop)){
+    $tempstore->set('use_pop',true);
+    $use_pop = true;
+  }
+
+  $variables['#attached']['drupalSettings']['triage']['popup']['use_pop'] = $use_pop;
+  $config = \Drupal::service('config.factory')->getEditable('triage.config');
+  $configvals = $config->get('config');
+  $num_skips = isset($configvals['triage_popup_norepeat']) ? intval($configvals['triage_popup_norepeat']) : NULL;
+  $variables['#attached']['drupalSettings']['triage']['popup']['numskips'] = $num_skips;
+  $use_popup = isset($configvals['triage_use_popup']) ? $configvals['triage_use_popup'] : NULL;
+  if($use_popup && $use_pop) {
+    $nid = \Drupal::routeMatch()->getRawParameter('node');
+    if (isset($nid)) {
+      $node = \Drupal\node\Entity\Node::load($nid);
+      if($node->hasField("field_category")) {
+        if(isset($node->get("field_category")->getValue()[0])) {
+          $tid = $node->get("field_category")->getValue()[0]['target_id'];
+          if (isset($tid)) {
+            $tids = triage_popinfo($tid);
+            foreach ($tids as $td) {
+              $lookupid = null;
+              $term = \Drupal\taxonomy\Entity\Term::load($td);
+              if(isset($term->get("field_triage_categories")->getValue()[0])) {
+                $lookupid = $term->get("field_triage_categories")
+                  ->getValue()[0]['target_id'];
+              }
+              if ($lookupid) {
+                $thisterm = \Drupal\taxonomy\Entity\Term::load($lookupid);
+                break;
+              }
+            }
+          }
+        }
+        if (isset($thisterm)) {
+          $termname = $term->getName();
+          $termtid = $lookupid;
+          $msg = "";
+          $msg .= "<div tabindex='-1' class='triage-pop-wrap'>";
+          $poptitle = $configvals['triage_popup_title'];
+          $basemsg = $configvals['triage_popup_basemsg'];
+          if (is_array($basemsg)) {
+            $basemsg = $basemsg['value'];
+          }
+          $yestext = $configvals['triage_yes_text'];
+          $gentext = $configvals['triage_gen_text'];
+          $notext = $configvals['triage_no_text'];
+          $url = "/triage/vt_triage/" . $termtid . "?clear=true";
+          $msg .= "<a title='Close' id='bdslegalpopupClose' href='#' aria-label='Close Window'>x</a>";
+          $msg .= "<h3>" . t($poptitle) . "</h3>";
+          //$msg .= "<h3>" . $parent_tid . "</h3>";
+          $msg .= "<div class='triage-pop-message'>";
+          if ($url) {
+            $msg .= "<p>" . t("You seem to be interested in issues around " . $termname) . "</p>";
+          }
+          $msg .= "<p>" . $basemsg . "</p></div>";
+          $msg .= "<div class='triage-pop-buttons'>";
+          $msg .= "<div class='triage-buttons-wrap'>";
+          $msg .= "<a class='yes-popbutton' href='" . $url . "'>" . t($yestext) . "</a>";
+          if ($configvals['triage_use_popup_taxonomy_language']) {
+            $msg .= "<a class='gen-popbutton' href='" . $url . "'>" . t($gentext) . "</a>";
+          }
+          $msg .= "<a class='no-popbutton' href='#'>" . t($notext) . "</a>";
+          $msg .= "</div></div></div>";
+          $msg . "</div></div>";
+
+          $variables['#attached']['drupalSettings']['triage']['popup']['use_popup'] = TRUE;
+          $variables['#attached']['drupalSettings']['triage']['popup']['legal_cat'] = $termname;
+          $variables['#attached']['drupalSettings']['triage']['popup']['legal_cat_tid'] = $termtid;
+          $variables['#attached']['drupalSettings']['triage']['popup']['msg'] = $msg;
+          //$variables['#attached']['drupalSettings']['triage']['popup']['msg'] = $termtid;
+        }
+      }
+    }
+  }
+
+  $povguides = \Drupal::service('config.factory')
+    ->getEditable('triage.pov')
+    ->get('pov');
+  $variables['#attached']['drupalSettings']['triage']['my_triage'] = $tempstore->get('my_triage');
+  $variables['#attached']['drupalSettings']['triage']['my_group'] = $tempstore->get('my_group');
+  $variables['#attached']['drupalSettings']['zip_code_success'] = NULL;
+  $variables['#attached']['drupalSettings']['triage']['povguides'] = $povguides;
+}
+
+function triage_set_variables() {
+  $con = Database::getConnection();
+  $GLOBALS['ta_conf'] = [];
+  $qry = $con->select('ta_variable', 't');
+  $qry->addField('t', 'nid');
+  $qry->distinct();
+  $qry->condition('t.nid', -1, ">");
+  $nids = $qry->execute();
+  foreach ($nids as $nid) {
+    $GLOBALS['ta_conf'][$nid->nid] = [];
+    $qry = $con->select('ta_variable', 't');
+    $qry->fields('t', ['name', 'value']);
+    $qry->condition('t.nid', $nid->nid);
+    $vals = $qry->execute();
+    foreach ($vals as $val) {
+      $GLOBALS['ta_conf'][$nid->nid][$val->name] = unserialize($val->value);
+    }
+  }
+}
+
+function triage_node_update(Drupal\node\NodeInterface $node) {
+  return TRUE;
+  $tempstore = \Drupal::service('tempstore.private')->get('triage');
+  $some_data = $tempstore->get('time_start');
+  $tempstore = \Drupal::service('tempstore.private')->get('triage');
+  $tempstore->set('time_start', "he may");
+  //    if ($node->type == "triage_page") {
+  //        $loaded_node = node_load($node->nid, NULL, TRUE);
+  //        $vid = ta_variable_get('triage_vocabulary', '', $node->nid);
+  //        if ($vid) {
+  //            triage_add_fields($vid);
+  //            triage_add_fields3($vid);
+  //        }
+  //        triage_add_fields2($node->nid);
+  //    }
+}
+
+function triage_get_state_options() {
+  $options = [
+    ' ' => '-None-',
+    'AL' => 'Alabama',
+    'AK' => 'Alaska',
+    'AZ' => 'Arizona',
+    'AR' => 'Arkansas',
+    'CA' => 'California',
+    'CO' => 'Colorado',
+    'CT' => 'Connecticut',
+    'DE' => 'Delaware',
+    'DC' => 'District Of Columbia',
+    'FL' => 'Florida',
+    'GA' => 'Georgia',
+    'HI' => 'Hawaii',
+    'ID' => 'Idaho',
+    'IL' => 'Illinois',
+    'IN' => 'Indiana',
+    'IA' => 'Iowa',
+    'KS' => 'Kansas',
+    'KY' => 'Kentucky',
+    'LA' => 'Louisiana',
+    'ME' => 'Maine',
+    'MD' => 'Maryland',
+    'MA' => 'Massachusetts',
+    'MI' => 'Michigan',
+    'MN' => 'Minnesota',
+    'MS' => 'Mississippi',
+    'MO' => 'Missouri',
+    'MT' => 'Montana',
+    'NE' => 'Nebraska',
+    'NV' => 'Nevada',
+    'NH' => 'New Hampshire',
+    'NJ' => 'New Jersey',
+    'NM' => 'New Mexico',
+    'NY' => 'New York',
+    'NC' => 'North Carolina',
+    'ND' => 'North Dakota',
+    'OH' => 'Ohio',
+    'OK' => 'Oklahoma',
+    'OR' => 'Oregon',
+    'PA' => 'Pennsylvania',
+    'RI' => 'Rhode Island',
+    'SC' => 'South Carolina',
+    'SD' => 'South Dakota',
+    'TN' => 'Tennessee',
+    'TX' => 'Texas',
+    'UT' => 'Utah',
+    'VT' => 'Vermont',
+    'VA' => 'Virginia',
+    'WA' => 'Washington',
+    'WV' => 'West Virginia',
+    'WI' => 'Wisconsin',
+    'WY' => 'Wyoming',
+  ];
+  return $options;
+}
+
+function triage_output($tid = NULL, $preview = 0) {
+  $bds = "";
+  $account = \Drupal::currentUser();
+  $language = \Drupal::languageManager()->getCurrentLanguage();
+  global $base_url;
+  $tempstore = \Drupal::service('tempstore.private')->get('triage');
+  $tempstore->set('end_nodes', []);
+  $tempstore->set('time_end', time());
+  $tempstore->set('complete_run', true);
+  $output = "<div class='triage-output'>";
+  if ($tid) {
+    $tid = intval($tid);
+    $myhelp = NULL;
+    setcookie('triage_last_tid', $tid, time() + (86400 * 30), "/");
+    $tempstore->set('triage_final_tid', $tid);
+    $term = \Drupal\taxonomy\Entity\Term::load($tid);
+    $tempstore->set('triage_last_stop', $term->name->getString());
+    $vid = $term->bundle();
+    $tempstore->set('triage_current_voc', $vid);
+    $tempstore->set('triage_preview', $preview);
+    $return_dest = $base_url . '/taxonomy/term/' . $tid . '/actions';
+    $regions = [
+      'ta-message-panel',
+      'ta-main-panel',
+      'ta-help-panel',
+      'ta-bottom-panel',
+    ];
+    $bundles = ['help', 'taxonomy'];
+    // Process taxonomy actions per region/bundle type
+    if ($preview == 1) {
+      $output .= "<div class='preview contextual-links-region'>
+                  <h5 class='preview'>
+                  <a  href='" . $return_dest . "'>Preview only - Return to action builder</a></h5>";
+    }
+    if ($preview == 2) {
+      $return_dest = $base_url . '/triage_actions_admin';
+      $output .= "<div class='preview contextual-links-region'>
+                  <h5 class='preview'>
+                  <a href='" . $return_dest . "'>Preview only - Return to Action Manager</a></h5>";
+    }
+    foreach ($regions as $region) {
+      $display_ray = [];
+      if ($region == "ta-main-panel") {
+        $output .= "<div class='triage-main-info'>";
+      }
+      $output .= "<div class='triage-region " . $region . "'>";
+      foreach ($bundles as $bundle) {
+        // Get items for this tid, bundle and region
+        $items = triage_actions_get_by_parent($tid, 0, $bundle, $region);
+        // Assemble the output for the items
+        triage_actions_get_action($items, $output, $tid, $bundle, $region, $display_ray);
+      }
+      $output .= "</div>";
+    }
+
+  }
+  $output .= "</div>";
+  if ($preview == 3) {
+    $send_to = $tempstore->get('triage_send_to');
+    if ($send_to > '') {
+      $tempstore->set('triage_email', 1);
+      $msg = "Email to " . $send_to . " failed";
+      $success = triage_actions_mail('default_from', $send_to, 'Help for your legal problem', $output);
+      if ($success) {
+        $msg = "Email to " . $send_to . " was successfully sent";
+      }
+      $tempstore->set('triage_send_to', '');
+      \Drupal::messenger()->addMessage($msg, "status");
+    }
+  }
+  triage_write_history();
+  return $output;
+}
+
+function triage_get_zip($form, $form_state) {
+  $tempstore = \Drupal::service('tempstore.private')->get('triage');
+  $nid = $tempstore->get('triage_page_nid');
+  $triage_state = ta_variable_get('triage_state', '', $nid);
+  $site_state = $tempstore->get('triage_state_id');
+  if (is_null($triage_state) || $triage_state == "-None-") {
+    $site_state = "";
+  }
+  $values = $form_state->getValues();
+  $pl = $values['triage_zip'];
+  $out = triage_build_zip($pl);
+  $response = new AjaxResponse();
+  $response->addCommand(new HtmlCommand('#triage_city', $out));
+  return $response;
+}
+
+function triage_build_zip($pl = NULL) {
+  $tempstore = \Drupal::service('tempstore.private')->get('triage');
+  $tempstore->set('complete_run',false);
+  $tempstore->set('num2skip', 0);
+  $nid = $tempstore->get('triage_page_nid');
+  $triage_state = ta_variable_get('triage_state', '', $nid);
+  $out = "";
+  if ($pl == "000") {
+    $out .= "<div class='found-zip' >Unknown city and zipcode</div>";
+    $tempstore->set('location_success', TRUE);
+    $tempstore->set('my_zip', "000");
+    $myplace['zip'] = "000";
+    $tempstore->set('my_town', "Unknown");
+    $myplace['city'] = "Unknown";
+    $tempstore->set('my_county', "Unknown");
+    $myplace['county'] = "Unknown";
+    $tempstore->set('my_lat', 0);
+    $myplace['latitude'] = 0;
+    $tempstore->set('my_long', 0);
+    $tempstore->set('my_state', '');
+    $myplace['longitude'] = 0;
+  }
+  else {
+    $x = 0;
+    while ($x < 3) {
+      $x++;
+      $myplace = triage_zip_data($pl);
+      if (isset($myplace['success']) && $myplace['success']) {
+        $x = 4;
+      }
+    }
+    if (isset($myplace['success']) && $myplace['success']) {
+      $out .= "<div class='found-zip'>" . $myplace['city'] . ", " . triage_state_name($myplace['state']) . " " . $myplace['zip'];
+      $out .= " " . " ~ County: " . $myplace['county'] . "</div>";
+      $tempstore->set('location_success', TRUE);
+      $tempstore->set('my_zip', $myplace['zip']);
+      $tempstore->set('my_town', $myplace['city']);
+      $tempstore->set('my_county', $myplace['county']);
+      $tempstore->set('my_lat', $myplace['latitude']);
+      $tempstore->set('my_long', $myplace['longitude']);
+      $tempstore->set('my_state', triage_state_name($myplace['state']));
+    }
+    else {
+      $out .= "<div class='city-fail'>The city or zipcode you entered is not recognized <br />";
+      $out .= "</div>";
+      $out .= "<div class='no-location'></div>";
+      $tempstore->set('my_zip', "");
+      $tempstore->set('my_town', "");
+      $tempstore->set('my_county', "");
+      $tempstore->set('my_lat', "");
+      $tempstore->set('my_long', "");
+      $tempstore->set('my_state', '');
+    }
+  }
+  return $out;
+}
+
+function triage_zip_data($zip = NULL) {
+  $tempstore = \Drupal::service('tempstore.private')->get('triage');
+  $config = \Drupal::service('config.factory')->getEditable('triage.config');
+  $configvals = $config->get('config');
+  $googlekey = $configvals['triage_google_key'];
+  //  watchdog('zip',$zip);
+  $site_state = $tempstore->get('triage_state_id');
+  if (is_null($site_state) || $site_state == '-None-') {
+    $site_state = "";
+  }
+  $nid = $tempstore->get('triage_page_nid');
+  $triage_state = ta_variable_get('triage_state', '', $nid);
+  if (is_null($triage_state) || $triage_state == "-None-") {
+    $site_state = "";
+  }
+  $data = [];
+  $nozip = FALSE;
+  $data['latitude'] = 0;
+  $data['longitude'] = 0;
+  $data['zip'] = $zip;
+  if ($zip && $zip > "") {
+    if (is_numeric($zip)) {
+      //$query_url .= "postal_code:" . $zip . "|";
+    }
+    else {
+      $nstart = strpos($zip, ",");
+      if ($nstart !== FALSE) {
+        $zip = substr($zip, 0, $nstart);
+      }
+      $zip .= "," . $site_state;
+      //$query_url .= "locality:" . $zip . "|";
+      $data['zip'] = '';
+      $nozip = TRUE;
+    }
+    $zip = str_replace(" ", "%20", $zip);
+    $query_url = "https://maps.google.com/maps/api/geocode/json?components=postal_code:" . $zip . "|country:US&key=" . $googlekey;
+    \Drupal::logger('rpt')->notice($query_url);
+    $session = curl_init($query_url);
+    curl_setopt($session, CURLOPT_RETURNTRANSFER, TRUE);
+    $json = curl_exec($session);
+    if (!$json) {
+      $arrContextOptions = [
+        "ssl" => [
+          "verify_peer" => FALSE,
+          "verify_peer_name" => FALSE,
+        ],
+      ];
+      $json = file_get_contents($query_url, FALSE, stream_context_create($arrContextOptions));
+    }
+    $phpObj = json_decode($json);
+    if (!is_null($phpObj->results)) {
+      foreach ($phpObj->results as $place) {
+        if (!is_null($place->address_components)) {
+          foreach ($place->address_components as $comp) {
+            if (in_array('locality', $comp->types)) {
+              $data['city'] = str_replace("City", "", $comp->short_name);
+            }
+            if (in_array('administrative_area_level_2', $comp->types)) {
+              $data['county'] = str_replace('County', '', $comp->short_name);
+            }
+            if (in_array('administrative_area_level_1', $comp->types)) {
+              $data['state'] = $comp->short_name;
+            }
+          }
+          if (trim($site_state) == '') {
+            if ($data['state'] > '') {
+              $data['success'] = TRUE;
+            }
+          }
+          else {
+            if ($data['state'] == $site_state) {
+              $data['success'] = TRUE;
+            }
+            else {
+              $data['success'] = FALSE;
+            }
+          }
+          //break;
+          if (!is_null($place->geometry)) {
+            $data['latitude'] = $place->geometry->location->lat;
+            $data['longitude'] = $place->geometry->location->lng;
+          }
+        }
+        else {
+          $data['success'] = FALSE;
+        }
+      }
+      if (!isset($data['city']) || trim($data['city']) == '') {
+        $city = $phpObj->results[0]->formatted_address;
+        $pos = strpos($city, ",");
+        $data['city'] = substr($city, 0, $pos);
+      }
+      if (!isset($data['county']) || trim($data['county']) == '') {
+        if ($data['latitude'] > 0) {
+          curl_close($session);
+          $url = 'https://maps.googleapis.com/maps/api/geocode/json?latlng=' . $data['latitude'] . "," . $data['longitude'];
+          $session = curl_init($url);
+          curl_setopt($session, CURLOPT_RETURNTRANSFER, TRUE);
+          $json = curl_exec($session);
+          $phpObj = json_decode($json);
+          if (!is_null($phpObj->results)) {
+            foreach ($phpObj->results as $loc) {
+              if (!is_null($loc->address_components)) {
+                foreach ($loc->address_components as $comp) {
+                  if (in_array('administrative_area_level_2', $comp->types)) {
+                    $data['county'] = str_replace('County', '', $comp->short_name);
+                    break;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      if ($nozip && $data['latitude'] > 0) {
+        curl_close($session);
+        $url = 'https://maps.googleapis.com/maps/api/geocode/json?key=' . $googlekey . '&latlng=' . $data['latitude'] . "," . $data['longitude'];
+        $session = curl_init($url);
+        curl_setopt($session, CURLOPT_RETURNTRANSFER, TRUE);
+        $json = curl_exec($session);
+        $phpObj = json_decode($json);
+        if (!is_null($phpObj->results)) {
+          foreach ($phpObj->results as $loc) {
+            if (!is_null($loc->address_components)) {
+              foreach ($loc->address_components as $comp) {
+                if (in_array('postal_code', $comp->types)) {
+                  $data['zip'] = $comp->short_name;
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    curl_close($session);
+  }
+  return $data;
+}
+
+function triage_state_name($statecode) {
+  if (is_null($statecode || trim(statecode) == '')) {
+    return '';
+  }
+  $options = [
+    ' ' => '-None-',
+    'AL' => 'Alabama',
+    'AK' => 'Alaska',
+    'AZ' => 'Arizona',
+    'AR' => 'Arkansas',
+    'CA' => 'California',
+    'CO' => 'Colorado',
+    'CT' => 'Connecticut',
+    'DE' => 'Delaware',
+    'DC' => 'District Of Columbia',
+    'FL' => 'Florida',
+    'GA' => 'Georgia',
+    'HI' => 'Hawaii',
+    'ID' => 'Idaho',
+    'IL' => 'Illinois',
+    'IN' => 'Indiana',
+    'IA' => 'Iowa',
+    'KS' => 'Kansas',
+    'KY' => 'Kentucky',
+    'LA' => 'Louisiana',
+    'ME' => 'Maine',
+    'MD' => 'Maryland',
+    'MA' => 'Massachusetts',
+    'MI' => 'Michigan',
+    'MN' => 'Minnesota',
+    'MS' => 'Mississippi',
+    'MO' => 'Missouri',
+    'MT' => 'Montana',
+    'NE' => 'Nebraska',
+    'NV' => 'Nevada',
+    'NH' => 'New Hampshire',
+    'NJ' => 'New Jersey',
+    'NM' => 'New Mexico',
+    'NY' => 'New York',
+    'NC' => 'North Carolina',
+    'ND' => 'North Dakota',
+    'OH' => 'Ohio',
+    'OK' => 'Oklahoma',
+    'OR' => 'Oregon',
+    'PA' => 'Pennsylvania',
+    'RI' => 'Rhode Island',
+    'SC' => 'South Carolina',
+    'SD' => 'South Dakota',
+    'TN' => 'Tennessee',
+    'TX' => 'Texas',
+    'UT' => 'Utah',
+    'VT' => 'Vermont',
+    'VA' => 'Virginia',
+    'WA' => 'Washington',
+    'WV' => 'West Virginia',
+    'WI' => 'Wisconsin',
+    'WY' => 'Wyoming',
+  ];
+  return $options[$statecode];
+}
+
+function triage_crumb($tid, $returntid = FALSE, $returnray = FALSE) {
+  $language = \Drupal::languageManager()->getCurrentLanguage();
+  $lang = $language->getId();
+  $breadcrumb = [];
+  try {
+    $tax_ray = \Drupal::service('entity_type.manager')
+      ->getStorage('taxonomy_term')
+      ->loadAllParents($tid);
+  } catch (\Drupal\Component\Plugin\Exception\InvalidPluginDefinitionException $e) {
+  }
+  foreach ($tax_ray as $ray) {
+    if (in_array($ray->name, $breadcrumb)) {
+      continue;
+    }
+    $ray = \Drupal::service('entity.repository')
+      ->getTranslationFromContext($ray, $lang); // The important part!
+    if ($returntid) {
+      $breadcrumb[] = $ray->id();
+    }
+    else {
+      $breadcrumb[] = $ray->label();
+    }
+  }
+  $breadcrumb = array_reverse($breadcrumb);
+  //array_pop($breadcrumb);
+  if ($returntid) {
+    return $breadcrumb[0];
+  }
+  if ($returnray) {
+    return $breadcrumb;
+  }
+  return implode(">>", $breadcrumb);
+}
+
+function triage_popinfo($tid) {
+  $retray = [];
+  try {
+    $tax_ray = \Drupal::service('entity_type.manager')
+      ->getStorage('taxonomy_term')
+      ->loadAllParents($tid);
+  } catch (\Drupal\Component\Plugin\Exception\InvalidPluginDefinitionException $e) {
+  }
+  foreach ($tax_ray as $ray) {
+    if (in_array($ray->name, $retray)) {
+      continue;
+    }
+    $retray[] = $ray->id();
+  }
+  return $retray;
+}
+
+function triage_post() {
+  $con = Database::getConnection();
+  $tempstore = \Drupal::service('tempstore.private')->get('triage');
+  $data = $_POST;
+  foreach ($data as $dats) {
+    foreach ($dats as $d) {
+      $frm = $d['form'];
+      $inp = rtrim($d['inputs'], ",");
+      $ans = rtrim($d['values'], ",");
+      switch ($frm) {
+        case "triage-in-service-area-form" :
+          $tempstore->set('triage_non_service_area', $ans);
+          break;
+        case "triage-location-form" :
+          $vals = explode(",", $ans);
+          $tempstore->set('triage_who_is', $vals[0]);
+          $tempstore->set('triage_in_service_area', $vals[1]);
+          if ($vals[1] == '1') {
+            $tempstore->set('triage_non_service_area', '0');
+          }
+          else {
+            $tempstore->set('triage_non_service_area', '1');
+          }
+          $tempstore->set('my_county', $vals[2]);
+          $tempstore->set('triage_kind_of_help', $vals[3]);
+          break;
+        case "triage-status-form" :
+          $vals = explode(",", $ans);
+          $status = [];
+          foreach ($vals as $val) {
+            if ($val > '') {
+              $status[$val] = $val;
+            }
+          }
+          $tempstore->set('triage_status', $status);
+          break;
+        case "triage-zip-form" :
+          $pl = $ans;
+          $myplace = triage_zip_data($pl);
+          if (isset($myplace['success']) && $myplace['success']) {
+            $tempstore->set('location_success', TRUE);
+            $tempstore->set('my_zip', $myplace['zip']);
+            $tempstore->set('my_town', $myplace['city']);
+            $tempstore->set('my_state', $myplace['state']);
+            $tempstore->set('my_county', $myplace['county']);
+            $tempstore->set('my_lat', $myplace['latitude']);
+            $tempstore->set('my_long', $myplace['longitude']);
+          }
+          break;
+        case "triage-pov-form" :
+          $vals = explode(",", $ans);
+          $tempstore->set('my_house_size', $vals[0]);
+          $inc = str_replace(",", "", $vals[1]);
+          $tempstore->set('my_house_income', $inc);
+          break;
+        case "triage-income-form" :
+          $vals = explode(",", $ans);
+          $tempstore->set('triage_live_alone', $vals[0]);
+          if ($vals[0] == '0') {
+            $tempstore->set('my_house_size', 1);
+          }
+          else {
+            $tempstore->set('my_house_size', $vals[1] + 1);
+          }
+          $inc = str_replace(",", "", $vals[2]);
+          $tempstore->set('my_house_income', $inc);
+          $tempstore->set('triage_income_period', $vals[3]);
+          $benefits = [];
+          $benvals = array_slice($vals, 4);
+          foreach ($benvals as $val) {
+            if ($val > '') {
+              $benefits[$val] = $val;
+            }
+          }
+          $tempstore->set('my_benefits', $benefits);
+          break;
+        case "triage-followup-form" :
+          $vals = explode(",", $ans);
+          $factors = [];
+          foreach ($vals as $val) {
+            if ($val > '') {
+              $factors[$val] = $val;
+            }
+          }
+          $tempstore->set('factors', $factors);
+          break;
+      }
+    }
+    $stop = '';
+  }
+  $bds = '';
+  return TRUE;
+}
+
+function triage_nothanks() {
+  $tempstore = \Drupal::service('tempstore.private')->get('triage');
+  $tempstore->set('use_pop',false);
+  return TRUE;
+}
+
+function triage_build($vid = 'vt_triage', $thistid = NULL, $return_js = 0, $groupid = 0) {
+  $con = Database::getConnection();
+  $output = "";
+  $tempstore = \Drupal::service('tempstore.private')->get('triage');
+  if(isset($_GET['clear'])){
+    if( $_GET['clear'] ){
+      $tempstore->set('tid_hist', [0]);
+    }
+  }
+  $language = \Drupal::languageManager()->getCurrentLanguage();
+  $lang = $language->getId();
+  $nid = $tempstore->get('triage_page_nid');
+  $tempstore->set('triage_current_voc', $vid);
+  $backtext = t(ta_variable_get('triage_reset_text', 'Back', $nid));
+  if (is_null($thistid)) {
+    $tid = 0;
+    $tempstore->set('my_tid', NULL);
+    $tempstore->set('time_start', time());
+    $tempstore->set('tid_hist', [0]);
+  }
+  else {
+    if($thistid == 0){
+      $tempstore->set('tid_hist', [0]);
+    }
+    $tid = $thistid;
+    $tempstore->set('my_tid', $tid);
+    $tidhist = $tempstore->get('tid_hist');
+    $newhist = [0];
+    if (in_array($tid, $tidhist)) {
+      $newhist = null;
+      foreach ($tidhist as $td) {
+        $newhist[] = $td;
+        if ($td == $tid) {
+           break;
+        }
+      }
+      $tidhist = $newhist;
+    }
+    else {
+      $tidhist[] = $tid;
+    }
+    $tempstore->set('tid_hist', $tidhist);
+  }
+  $my_triage = [
+    'item' => [],
+    'tid' => ['0' => 0],
+    'cat_text' => '',
+    'sub_text' => t('hello'),
+    'lang' => $lang,
+    'default_lang' => 'en',
+    'vocab' => $vid,
+    'scroll_offset' => ta_variable_get('triage_scroll_offset', 5, $nid),
+  ];
+  $tempstore->set('my_triage', $my_triage);
+  if (is_null($thistid)) {
+    $tid = 0;
+    $tempstore->set('my_tid', NULL);
+  }
+  else {
+    $tid = $thistid;
+    $tempstore->set('my_tid', $tid);
+  }
+  $qry = $con->select('triage_actions', 'ta');
+  $qry->addField('ta', 'id');
+  $qry->condition('ta.bundle', 'node')
+    ->condition('ta.type', 'group')
+    ->condition('ta.entity_id', $nid);
+  $grp_array = $qry->execute()->fetchCol();
+  $group_num = count($grp_array);
+  $group_text = [];
+  $steps = [];
+  foreach ($grp_array as $grp) {
+    $group_text[$grp] = triage_group_text($grp);
+    $steps[] = $grp;
+  }
+  $steps[] = 0;
+  $my_group = [$group_text];
+  $tempstore->set('my_group', $my_group);
+  $thisgroup = $groupid;
+  switch ($groupid) {
+    case -1:
+      break;
+    case 0:
+      break;
+    default:
+      $key = array_search($groupid, $grp_array);
+      if ($key - 1 < count($grp_array)) {
+        $thisgroup = $grp_array[$key + 1];
+      }
+      else {
+        $thisgroup = 0;
+      }
+  }
+  $tempstore->set('triage_journey', []);
+  if ($tid == 0) {
+    $tempstore->set('triage_change_info', FALSE);
+    $tempstore->set('triage_done_that', TRUE);
+    if ($thisgroup >= 0 && $group_num > 0) {
+      $tempstore->set('triage_in_questions', 0);
+      if ($thisgroup == 0) {
+        $tempstore->set('triage_history', '');
+        $gid = $grp_array[0];
+        $tempstore->set('triage_last_stop', $group_text[$gid]);
+        $hist = $tempstore->get('triage_history');
+        $tempstore->set('triage_history', $hist . $group_text[$gid]);
+      }
+      $items = triage_actions_get_by_parent($nid, 0, 'node');
+      triage_actions_get_action($items, $output, $nid, "node");
+      $output .= '<div class="triage-content">';
+      $output = '<div class="triage-master"><div class="triage-main-body">' . $output . "</div></div>";
+      return $output;
+    }
+    else {
+      $output .= '<div class="triage-content"><div class="triage-master"><div class="triage-main-body"><div class="triage-main-top">';
+    }
+    $previd = 0;
+
+    triage_categories($output, $vid, $tid, FALSE, $previd);
+    $output .= "</div></div></div></div></div>";
+
+    return $output;
+  }
+  else {
+    $previd = 0;
+    $tidhist = $tempstore->get('tid_hist');
+    $histcnt = max(count($tidhist), 2);
+    $previd = $tidhist[($histcnt - 2)];
+    $output .= "<div class='triage-main-body'><div class='triage-statements'>";
+    $subout = triage_categories($output, $vid, $tid, TRUE, $previd);
+    $prev = 'prev-' . $previd;
+    $output .= "</div>";
+    $output .= "<div class='ta-nav-bar'>";
+    $backtxt = "<button tabindex='0' class='triage-reset-text'>" . $backtext . "</button>";
+    $output .= "<div class='triage-reset " . $prev . "'>" . $backtxt . "</div>";
+    if ($subout) {
+      $output .= $subout;
+    }
+    $output .= "</div></div>";
+
+    $items = triage_actions_get_by_parent($nid, 0, 'quests', 'ta-help-panel');
+    if($items) {
+      $output .= "<div class='ta-help-panel'>";
+      triage_actions_get_action($items, $output, $nid, "quests", 'ta-help-panel');
+      $output .= "</div>";
+    }
+    $items = triage_actions_get_by_parent($nid, 0, 'quests', 'ta-bottom-panel');
+    if($items) {
+      $output .= "<div class='ta-bottom-panel'>";
+      triage_actions_get_action($items, $output, $nid, "quests", 'ta-bottom-panel');
+      $output .= "</div>";
+    }
+
+    return $output;
+  }
+}
+
+function triage_group_text($gid) {
+  $con = Database::getConnection();
+  $qry = $con->select('triage_actions', 'ta');
+  $qry->addField('ta', 'extra');
+  $qry->condition('ta.bundle', 'node')
+    ->condition('ta.type', 'group')
+    ->condition('ta.id', $gid);
+  $grp_array = $qry->execute()->fetchColumn();
+  $out = $qry->execute()->fetchColumn();
+  if (empty($out)) {
+    $qry = $con->select('triage_actions', 'ta');
+    $qry->addField('ta', 'title');
+    $qry->condition('ta.bundle', 'node')
+      ->condition('ta.type', 'group')
+      ->condition('ta.id', $gid);
+    $grp_array = $qry->execute()->fetchColumn();
+    $out = $qry->execute()->fetchColumn();
+    $out = str_ireplace("wrapper", "", $out);
+    $out = str_ireplace("group", "", $out);
+  }
+  return $out;
+}
+
+function triage_page_field_value($node = NULL, $field = NULL, $default = FALSE) {
+  if (is_null($node) || is_null($field)) {
+    return $default;
+  }
+  $fieldinfo = field_get_items('node', $node, $field);
+  $out = $fieldinfo[0]['value'];
+  if (strlen($out) == 0) {
+    $out = $default;
+  }
+  return $out;
+}
+
+function triage_categories(&$output, $vid = NULL, $tid = 0, $quest = FALSE, &$previd) {
+  $tempstore = \Drupal::service('tempstore.private')->get('triage');
+  $tid = intval($tid);
+  $language = \Drupal::languageManager()->getCurrentLanguage();
+  $lang = $language->getId();
+  if($tid > 0){
+    $term = \Drupal\taxonomy\Entity\Term::load(intval($tid));
+    $term = \Drupal::service('entity.repository')
+      ->getTranslationFromContext($term, $lang);
+    $termname = $term->name->getString();
+    $journey = $tempstore->get('triage_journey');
+    $journey[$tid] = $termname;
+    $tempstore->set('triage_journey', $journey);
+  }
+  $addtid = null;
+  $status = $tempstore->get('triage_status');
+  $nid = $tempstore->get('triage_page_nid');
+  $con = Database::getConnection();
+  $tp_status_table = ta_variable_get('triage_status_table', '', $nid);
+  if ($tp_status_table) {
+    $tp_status_field = $tp_status_table . "_tid";
+    $tp_status_table = "field_data_" . $tp_status_table;
+  }
+  else {
+    $tp_status_field = '';
+    $tp_status_table = 0;
+  }
+
+  $tp_top_text = ta_variable_get('triage_top_text', 'Please choose the issue you need help with:', $nid);
+  if ($quest) {
+    $tp_top_text = ta_variable_get('triage_sub_text', 'Select the statement that best describes your legal problem:', $nid);
+  }
+  $output .= "<div class='ta-message-panel'>";
+  $items = triage_actions_get_by_parent($nid, 0, 'quests', 'ta-message-panel');
+  triage_actions_get_action($items, $output, $nid, "quests", 'ta-message-panel');
+  $output .= "</div>";
+  if (!isset($_COOKIE['triage_hist'])) {
+    setcookie('triage_hist', '', time() + (86400 * 30), "/");
+  }
+  else {
+    $tempstore->set('triage_history', $_COOKIE['triage_hist']);
+  }
+  if (!isset($_COOKIE['triage_last'])) {
+    setcookie('triage_last', '', time() + (86400 * 30), "/");
+  }
+  else {
+    $tempstore->set('triage_last_stop', $_COOKIE['triage_last']);
+  }
+  $tempstore->set('triage_in_questions', 1);
+  $submit_text = ta_variable_get('triage_submit_text', 'Submit', $nid);
+  $sbtxt = "<button tabindex='0' class='triage-submit-text'>" . t($submit_text) . "</button>";
+  $subout = "<div class='triage-submit tid-" . $tid . "'>" . $sbtxt . "</div>";
+  if ($quest) {
+    $term = \Drupal\taxonomy\Entity\Term::load(intval($tid));
+    $term = \Drupal::service('entity.repository')
+      ->getTranslationFromContext($term, $lang);
+    $termname = $term->name->getString();
+    if( $term->hasField('field_triage_ref_vt_triage') ){
+      if (!$term->get('field_triage_ref_vt_triage')->isEmpty()) {
+        $addtid = $term->get("field_triage_ref_vt_triage")
+          ->getValue()[0]['target_id'];
+      }
+    }
+    if (!is_null($termname)) {
+      $chkit = $tempstore->get('my_path');
+      $del = FALSE;
+      if ($chkit) {
+        foreach ($chkit as $key => $value) {
+          if ($key == $tid) {
+            $del = TRUE;
+            $tempstore->delete('my_path.' . $key);
+          }
+          if ($del) {
+            $tempstore->delete('my_path.' . $key);
+          }
+        }
+      }
+      $tempstore->set('my_path.' . $tid, $termname);
+    }
+    try {
+      $thisparent = \Drupal::service('entity_type.manager')
+        ->getStorage('taxonomy_term')
+        ->loadAllParents($tid);
+    } catch (\Drupal\Component\Plugin\Exception\InvalidPluginDefinitionException $e) {
+    }
+    if (count($thisparent) == 0) {
+      $tempstore->set('triage_history', $termname);
+    }
+    else {
+      $temphist = $tempstore->get('triage_history');
+      $tempstore->set('triage_history', $temphist . ">>" . $termname);
+    }
+    $tempstore->set('triage_last_stop', $termname);
+    try {
+      $parents = \Drupal::service('entity_type.manager')
+        ->getStorage('taxonomy_term')
+        ->loadAllParents($tid);
+    } catch (\Drupal\Component\Plugin\Exception\InvalidPluginDefinitionException $e) {
+    }
+    $reversed = array_reverse($parents);
+    $x = 0;
+    $tids = [];
+    foreach ($reversed as $rev) {
+      $tids[$x] = $rev->id();
+      $x++;
+    }
+    $my_triage = [
+      'item' => [],
+      'tid' => $tids,
+      'cat_text' => $tp_top_text,
+      'sub_text' => "",
+      'vocab' => $vid,
+    ];
+    $toplevel = FALSE;
+    if (count($parents) == 1) {
+      $toplevel = TRUE;
+    }
+    // Top level display
+    $top = $reversed[0];
+    $top = \Drupal::service('entity.repository')
+      ->getTranslationFromContext($top, $lang);
+    $output .= "<div class='triage-path-content clearfix'>";
+    if ($toplevel) {
+      $output .= "<div class='ta-answers-left no-right-border'>";
+    }
+    else {
+      $output .= "<div class='ta-answers-left'>";
+    }
+    if ($top) {
+      $kids = \Drupal::service('entity_type.manager')
+        ->getStorage('taxonomy_term')
+        ->loadChildren($top->id());
+      $numkids = count($kids);
+      if ($numkids == 0) {
+        $submit_text = ta_variable_get('triage_submit_text', 'Submit', $nid);
+        $output .= "<div class='nokids triage-selected trow-" . $top->id() . "'>";
+        $output .= "<hr /><div class='triage-submit'>" . t($submit_text) . "</div>";
+      }
+      else {
+        $output .= "<div class='triage-selected trow-" . $top->id() . "'>";
+      }
+      $image = NULL;
+      if ($quest) {
+        $image = $top->get('field_icon')->getValue();
+      }
+      $img_link = "";
+      $ext = "";
+      $imgclass = "";
+      if ($image) {
+        $img = NULL;
+        if (isset($image[0])) {
+          $fid = $image[0]['target_id'];
+          $img = \Drupal\file\Entity\File::load($fid);
+        }
+        if ($img) {
+          $path = $img->getFileUri();
+          $path_parts = pathinfo($path);
+          $ext = $path_parts['extension'];
+          if ($ext == "svg") {
+            $imgclass = "svg";
+            $url = file_create_url($path);
+          }
+          else {
+            $url = \Drupal\image\Entity\ImageStyle::load('thumbnail')
+              ->buildUrl($path);
+          }
+          if ($url) {
+            $alt = " alt='icon for " . t($top->name->getString()) . "' ";
+            $img_link = "<img class='" . $imgclass . "' " . $alt . " src='" . $url . "' />";
+          }
+        }
+        $output .= "<div class='triage-image '>" . $img_link . "</div>";
+        $output .= "<div class='triage-title'>" . t($top->name->getString()) . "</div>";
+      }
+      else {
+        $output .= "<div class='triage-title triage-button'>" . t($top->name->getString()) . "</div>";
+      }
+      $output .= "</div>";
+      $output .= "</div>";
+
+      $chkdupes = [];
+      $output .= "<div class='ta-answers-right'>";
+      $in_text = "You said";
+      $output .= "<div class='you-said'>" . t($in_text) . " :</div>";
+      foreach ($reversed as $p) {
+        if ($p->id() == $term->id()) {
+          continue;
+        }
+        else {
+          $previd = $p->id();
+        }
+        if ($p->id() == $top->id()) {
+          continue;
+        }
+        if (in_array($p->name->getString(), $chkdupes)) {
+          continue;
+        }
+        $p = \Drupal::service('entity.repository')
+          ->getTranslationFromContext($p, $lang);
+        $output .= "<div class='triage-show'>";
+        $chkdupes[] = $p->name->getString();
+        $output .= "- " . $p->name->getString();
+        $output .= "</div>";
+      }
+      $tempstore->set('triage_info', $term->getDescription());
+      $output .= "<div class='triage-selected'>- " . $term->name->getString() . "</div>";
+      $output .= "</div></div>";
+    }
+    else {
+      $output .= "</div>";
+    }
+  }
+  $qry = $con->select('taxonomy_term_field_data', 't');
+  $qry->addField('t', 'tid');
+  $qry->innerJoin('taxonomy_term__parent', 'h', 'h.entity_id=t.tid');
+  if ($addtid) {
+    $or = $qry->orConditionGroup()
+      ->condition('h.parent_target_id', $tid)
+      ->condition('h.parent_target_id', $addtid);
+    $qry->condition($or);
+  }
+  else {
+    $qry->condition('h.parent_target_id', $tid);
+  }
+  $qry->condition('t.vid', $vid);
+  if ($lang) {
+    $or = $qry->orConditionGroup()
+      ->condition('t.langcode', 'en')
+      ->condition('t.langcode', 'und');
+    $qry->condition($or);
+  }
+  $qry->orderBy('t.weight');
+  $items = $qry->execute();
+  $num_items = $qry->countQuery()->execute()->fetchField();
+  if($quest && $num_items == 0){
+    $tp_top_text = "For your results choose Get Results, or go back and change your selections.";
+  }
+  $output .= "<div class='triage-cat-text'><h2>" . t($tp_top_text) . "</h2></div>";
+  if ($quest) {
+    $output .= "<div class='triage-nav-quests'>";
+  }
+  else {
+    $output .= "<div class='triage-top'>";
+  }
+  foreach ($items as $item) {
+    $addtid = 0;
+    $classes = "";
+    $myhelp = "";
+    if ($num_items == 1) {
+      $triage_item = $item->tid;
+    }
+    $term = \Drupal\taxonomy\Entity\Term::load($item->tid);
+    if(isset($term->get('field_triage_keep_private')->getValue()[0]['value'])) {
+      if ($term->get('field_triage_keep_private')
+          ->getValue()[0]['value'] == "1") {
+        continue;
+      }
+    }
+    else{
+      $bds = "";
+    }
+    if(isset($term->get('field_triage_help')->getValue()[0])) {
+      if ($term->get('field_triage_help')->getValue()[0]['value']) {
+        $myhelp = $term->get('field_triage_help')->getValue()[0]['value'];
+      }
+    }
+    if ($myhelp > '') {
+      $classes .= 'tr-help ';
+    }
+    $termname = $term->name->getString();
+    $translated_term = \Drupal::service('entity.repository')
+      ->getTranslationFromContext($term, $lang);
+    if ($translated_term) {
+      $termname = $translated_term->getName();
+    }
+    $output .= "<button tabindex='0' class='" . $classes . " triage-row trow-" . $item->tid . "' data-topic='" . $termname . "'>";
+    $image = NULL;
+    if (!$quest) {
+      $image = $term->get('field_icon')->getValue();
+    }
+    $img_link = "";
+    $ext = "";
+    if ($image) {
+      $img = NULL;
+      $imgclass = "";
+      if (isset($image[0])) {
+        $fid = $image[0]['target_id'];
+        $img = \Drupal\file\Entity\File::load($fid);
+      }
+      if ($img) {
+        $path = $img->getFileUri();
+        $path_parts = pathinfo($path);
+        $ext = $path_parts['extension'];
+        if ($ext == "svg") {
+          $imgclass = "svg";
+          $url = file_create_url($path);
+        }
+        else {
+          $url = \Drupal\image\Entity\ImageStyle::load('thumbnail')
+            ->buildUrl($path);
+        }
+        if ($url) {
+          $alt = " alt='icon for " . t($termname) . "' ";
+          $img_link = "<img class='" . $imgclass . "' " . $alt . " src='" . $url . "' />";
+
+        }
+      }
+      $output .= "<div class='triage-image'>" . $img_link . "</div>";
+    }
+    $output .= "<div class='triage-row-text'>";
+    $output .= "<div class='triage-title triage-button'>" . $termname . "</div>";
+    if ($myhelp > '') {
+      $output .= "<div class='hidden triage-help thelp-" . $term->id() . "'>" . $myhelp . "</div>";
+    }
+    if (!$quest && $term->getDescription() > "") {
+      $output .= "<div class='triage-description'>" . t($term->getDescription()) . "</div>";
+    }
+    $output .= "</div></button>";
+  }
+  $output .= "</div>";
+  if ($quest && $num_items == 0) {
+    return $subout;
+  }
+  else {
+    return FALSE;
+  }
+}
+
+function triage_percent_pov($num = 0, $amt = 0, $bank = 0) {
+  $con = Database::getConnection();
+  $tempstore = \Drupal::service('tempstore.private')->get('triage');
+  $period = 12;
+  $chkperiod = $tempstore->get('triage_income_period');
+  switch ($chkperiod) {
+    case "Weekly" :
+      $period = 52;
+      break;
+    case "Bi-Weekly" :
+      $period = 26;
+      break;
+    case "Annual" :
+      $period = 1;
+      break;
+  }
+  $nid = $tempstore->get('triage_page_nid');
+  $vid = ta_variable_get('triage_income_eligibility', 'triage_income_eligibility', $nid);
+  if ($num == 0) {
+    $num = str_replace(",", "", $tempstore->get('my_house_size'));
+  }
+  if ($amt == 0) {
+    $amt = str_replace(",", "", $tempstore->get('my_house_income'));
+  }
+  if ($bank == 0) {
+    $bank = str_replace(",", "", $tempstore->get('triage_bank_amt'));
+  }
+  if ($num == 0) {
+    return -1;
+  }
+  if ($amt == 0) {
+    //return 0;
+  }
+  $config = \Drupal::config('triage.pov');
+  $vals = $config->get('pov');
+  //$vals = variable_get_value("triage_pov_guides", array());
+  //$pov = $vals[$num] / 12;
+  $pov = $vals[$num] / $period;
+  //watchdog('bds', 'pov: ' . $pov . " num: " . $num . " vals: " . serialize($vals));
+  $ret = floor(($amt * 100) / $pov);
+  $tempstore->set('triage_percent_pov', $ret);
+  $qry = $con->select('taxonomy_term_data', 't');
+  $qry->addField('t', 'tid');
+  $qry->condition('t.vid', $vid);
+  $results = $qry->execute();
+  $eligibility = [];
+  foreach ($results as $result) {
+    $floor = 0;
+    $ceiling = 0;
+    $bank_limit = 0;
+    $term = \Drupal\taxonomy\Entity\Term::load($result->tid);
+    //    $term = taxonomy_term_load($result->tid);
+    $range = explode(",", $term->field_pov_range->getValue());
+    if (isset($range[0])) {
+      $floor = $range[0];
+    }
+    if (isset($range[1])) {
+      $ceiling = $range[1];
+    }
+    if (isset($range[2])) {
+      $bank_limit = $range[2];
+    }
+    if (($floor + $ceiling + $bank_limit) == 0) {
+      continue;
+    }
+    if ($ret >= $floor && $ret <= $ceiling && $bank <= $bank_limit) {
+      $eligibility[] = $result->tid;
+    }
+  }
+  $tempstore->get('triage_eligibility', $eligibility);
+  return $ret;
+}
+
+function triage_is_form_used($formname) {
+  $con = Database::getConnection();
+  $tempstore = \Drupal::service('tempstore.private')->get('triage');
+  $nid = $tempstore->get('triage_page_nid');
+  if (is_null($nid)) {
+    $nid = 710170;
+  }
+  $qry = $con->select('triage_actions', 'a');
+  $qry->addField('a', 'id');
+  $qry->condition('a.entity_id', $nid)
+    ->condition('a.action_text', $formname);
+  $id = $qry->execute()->fetchColumn();
+  if ($id) {
+    return TRUE;
+  }
+  return FALSE;
+}
+
+function triage_get_page($vid = NULL) {
+  $con = Database::getConnection();
+  $tempstore = \Drupal::service('tempstore.private')->get('triage');
+  $language = \Drupal::languageManager()->getCurrentLanguage();
+  $lang = $language->getId();
+  if (is_null($vid)) {
+    $vid = 'vt_triage';
+    //return NULL;
+  }
+  $qry = $con->select('ta_variable', 'ta');
+  $qry->fields('ta', [
+    'nid',
+    'value',
+  ]);
+  $qry->condition('ta.name', 'triage_vocabulary');
+  $qry->condition('ta.nid', 0, '>');
+  $vals = $qry->execute()->fetchAll();
+  $nid = 0;
+  foreach ($vals as $val) {
+    if (unserialize($val->value) == $vid) {
+      $nid = $val->nid;
+      break;
+    }
+  }
+  $tempstore->set('triage_page_nid', $nid);
+  $base_node = \Drupal\node\Entity\Node::load($nid);
+  $tnode = $base_node;
+  //  $translations = translation_node_get_translations($base_node->tnid);
+  //  $tnode = (isset($translations[$lang]) ? node_load($translations[$lang]->nid) : $base_node);
+  return $tnode;
+}
+
+function triage_actions_parent_get_data($bundle, $this_tid) {
+  // Get all 'root node' items (items with no parents), sorted by weight.
+  $con = Database::getConnection();
+  $tempstore = \Drupal::service('tempstore.private')->get('triage');
+  $language = \Drupal::languageManager()->getCurrentLanguage();
+  $lang = $language->getId();
+
+  if ($bundle == 'taxonomy') {
+    $query = $con->select('triage_actions', 'ta');
+    $query->fields('ta', [
+      'id',
+      'region',
+      'type',
+      'pid',
+      'title',
+      'weight',
+      'action_text',
+      'node_ref_nid',
+      'language',
+      'enabled',
+    ]);
+    $query->innerJoin('taxonomy_term_data', 'td', 'td.tid=ta.entity_id');
+    $query->condition('td.tid', $this_tid)
+      ->condition('ta.bundle', $bundle)
+      ->condition('ta.pid', 0)
+      ->condition('ta.language', $lang)
+      ->orderBy('ta.weight', 'ASC');
+  }
+  else {
+    $query = $con->select('triage_actions', 'ta');
+    $query->fields('ta', [
+      'id',
+      'region',
+      'type',
+      'pid',
+      'title',
+      'weight',
+      'action_text',
+      'node_ref_nid',
+      'language',
+      'enabled,',
+    ]);
+    $query->innerJoin('node', 'n', 'n.nid=ta.entity_id');
+    $query->condition('n.nid', $this_tid)
+      ->condition('ta.bundle', $bundle)
+      ->condition('ta.pid', 0)
+      ->condition('ta.language', $lang)
+      ->orderBy('ta.weight', 'ASC');
+  }
+  //  dsm(triage_dpq($query));
+  $rootnodes = $query->execute()->fetchAll();
+  // Initialize a variable to store our ordered tree structure.
+  $itemtree = [];
+  // Depth will be incremented in our _get_tree() function for the first
+  // parent item, so we start it at -1.
+  $depth = -1;
+  // Loop through the root nodes, and add their trees to the array.
+  foreach ($rootnodes as $parent) {
+    triage_actions_get_tree($parent, $itemtree, $depth, $bundle, $this_tid);
+  }
+  return $itemtree;
+}
+
+function triage_actions_get_tree($parentitem, &$itemtree = [], &$depth = 0, $bundle, $this_tid) {
+  $con = Database::getConnection();
+  $tempstore = \Drupal::service('tempstore.private')->get('triage');
+  $language = \Drupal::languageManager()->getCurrentLanguage();
+  $lang = $language->getId();
+
+  // Increase our $depth value by one.
+  $depth++;
+  // Set the current tree 'depth' for this item, used to calculate indentation.
+  $parentitem->depth = $depth;
+  // Add the parent item to the tree.
+  $itemtree[$parentitem->id] = $parentitem;
+  // Retrieve each of the children belonging to this parent.
+  if ($bundle == 'taxonomy') {
+    $query = $con->select('triage_actions', 'ta');
+    $query->fields('ta', [
+      'id',
+      'region',
+      'type',
+      'pid',
+      ' title',
+      'weight',
+      'action_text',
+      'language',
+      'enabled',
+    ]);
+    $query->innerJoin('taxonomy_term_data', 'td', 'td.tid=ta.entity_id');
+    $query->condition('td.tid', $this_tid)
+      ->condition('ta.bundle', $bundle)
+      ->condition('ta.pid', $parentitem->id)
+      ->orderBy('ta.weight', 'ASC');
+  }
+  else {
+    $query = $con->select('triage_actions', 'ta');
+    $query->fields('ta', [
+      'id',
+      'region',
+      'type',
+      'pid',
+      ' title',
+      'weight',
+      'action_text',
+      'language',
+      'enabled',
+    ]);
+    $query->innerJoin('node', 'n', 'n.nid=ta.entity_id');
+    $query->condition('n.nid', $this_tid)
+      ->condition('ta.bundle', $bundle)
+      ->condition('ta.pid', $parentitem->id)
+      ->orderBy('ta.weight', 'ASC');
+  }
+  //  dsm(triage_dpq($query));
+  $children = $query->execute()->fetchAll();
+  foreach ($children as $child) {
+    // Make sure this child does not already exist in the tree, to avoid loops.
+    if (!in_array($child->id, array_keys($itemtree))) {
+      // Add this child's tree to the $itemtree array.
+      triage_actions_get_tree($child, $itemtree, $depth, $bundle, $this_tid);
+    }
+  }
+  // Finished processing this tree branch.  Decrease our $depth value by one
+  // to represent moving to the next branch.
+  $depth--;
+}
+
+function triage_get_children_all($tid) {
+  $c = \Drupal::entityTypeManager()
+    ->getStorage('taxonomy_term')
+    ->loadChildren($tid);
+  $result = [];
+  foreach ($c as $t => $d) {
+    $result[$t] = $d;
+    $below = triage_get_children_all($t);
+    if (!empty($below)) {
+      foreach ($below as $nt => $nd) {
+        $result[$nt] = $nd;
+      }
+    }
+  }
+  return $result;
+}
+
+function triage_ref_fields($chkbundles = NULL) {
+  if ($chkbundles && is_array($chkbundles)) {
+    $bundles = $chkbundles;
+  }
+  else {
+    $bunds = \Drupal::service('entity_type.bundle.info')
+      ->getBundleInfo('node');
+    $bundles = [];
+    foreach ($bunds as $key => $value) {
+      $bundles[] = $key;
+    }
+  }
+  $opts = [];
+  $vocs = [];
+  foreach ($bundles as $bundle) {
+    $flds = \Drupal::service('entity_field.manager')
+      ->getFieldDefinitions('node', $bundle);
+    foreach ($flds as $fld) {
+      if (!isset($fld->getSettings()['handler'])) {
+        continue;
+      }
+      $hand = $fld->getSettings()['handler'];
+      if ($hand == "default:taxonomy_term") {
+        $fldnm = $fld->getName();
+        if (!in_array_r($fldnm, $opts)) {
+          $opts["node__" . $fldnm] = ucwords(str_replace("_", " ", $fldnm));
+        }
+        $config = $fld->get('dependencies')['config'];
+        foreach ($config as $cf) {
+          if (strpos($cf, "taxonomy.vocabulary") !== FALSE) {
+            $vocs[$fldnm] = str_replace("taxonomy.vocabulary.", "", $cf);
+          }
+        }
+      }
+    }
+  }
+  $bds = "";
+  return $opts;
+}
+
+function triage_fix_states($state = NULL) {
+  if (is_null($state) || strlen($state) !== 2) {
+    return $state;
+  }
+  $bds = "";
+  $opts = [
+    'AL' => 'Alabama',
+    'AK' => 'Alaska',
+    'AZ' => 'Arizona',
+    'AR' => 'Arkansas',
+    'CA' => 'California',
+    'CO' => 'Colorado',
+    'CT' => 'Connecticut',
+    'DE' => 'Delaware',
+    'DC' => 'District Of Columbia',
+    'FL' => 'Florida',
+    'GA' => 'Georgia',
+    'HI' => 'Hawaii',
+    'ID' => 'Idaho',
+    'IL' => 'Illinois',
+    'IN' => 'Indiana',
+    'IA' => 'Iowa',
+    'KS' => 'Kansas',
+    'KY' => 'Kentucky',
+    'LA' => 'Louisiana',
+    'ME' => 'Maine',
+    'MD' => 'Maryland',
+    'MA' => 'Massachusetts',
+    'MI' => 'Michigan',
+    'MN' => 'Minnesota',
+    'MS' => 'Mississippi',
+    'MO' => 'Missouri',
+    'MT' => 'Montana',
+    'NE' => 'Nebraska',
+    'NV' => 'Nevada',
+    'NH' => 'New Hampshire',
+    'NJ' => 'New Jersey',
+    'NM' => 'New Mexico',
+    'NY' => 'New York',
+    'NC' => 'North Carolina',
+    'ND' => 'North Dakota',
+    'OH' => 'Ohio',
+    'OK' => 'Oklahoma',
+    'OR' => 'Oregon',
+    'PA' => 'Pennsylvania',
+    'RI' => 'Rhode Island',
+    'SC' => 'South Carolina',
+    'SD' => 'South Dakota',
+    'TN' => 'Tennessee',
+    'TX' => 'Texas',
+    'UT' => 'Utah',
+    'VT' => 'Vermont',
+    'VA' => 'Virginia',
+    'WA' => 'Washington',
+    'WV' => 'West Virginia',
+    'WI' => 'Wisconsin',
+    'WY' => 'Wyoming',
+  ];
+  if (isset($opts[$state])) {
+    return $opts[$state];
+  }
+  return $state;
+}
+
+function triage_fix_it() {
+  $con = Database::getConnection();
+  $res = $con->query('SELECT id, state from triage_log where length(state) = 2')
+    ->fetchAll();
+  foreach ($res as $re) {
+    $query = $con->update('triage_log');
+    $query->fields([
+      'state' => triage_fix_states($re->state),
+    ]);
+    $query->condition('id', $re->id);
+    $query->execute();
+  }
+}
+
+function triage_url($nid, $whatvalue = 'url', $only_popup = FALSE) {
+  $database = \Drupal::database();
+  global $base_url;
+  $this_base = $base_url;
+  $con = Database::getConnection();
+  $config = \Drupal::service('config.factory')->getEditable('triage.config');
+  $configvals = $config->get('config');
+  if ($configvals['triage_use_alt_url'] &&
+    $configvals['triage_alt_base_url'] > ""){
+    $this_base = $configvals['triage_alt_base_url'];
+  }
+  $whatvalue = strtolower($whatvalue);
+  $last = '';
+  $libdb = $configvals['triage_libtable'];
+  $libfld = $configvals['triage_libtid'];
+  // if (!db_table_exists($libdb)) {
+  if (!$database->schema()->tableExists($libdb)) {
+    return "";
+  }
+  $allowtids = array();
+  $triage_default_voc = $configvals['triage_default_voc'];
+  $url = $this_base . "/triage/" . $triage_default_voc;
+  if ($only_popup) {
+    // if (db_table_exists('field_data_field_triage_use_popup')) {
+    if ($database->schema()->tableExists('field_data_field_triage_use_popup')) {
+      $sql = "select entity_id as tid 
+                from field_data_field_triage_use_popup 
+                where field_triage_use_popup_value = 1";
+      $allowtids = $con->query($sql)->fetchCol();
+    }
+  }
+  $sql = "select " . $libfld . " from " . $libdb .
+    " where entity_id = :nid";
+  $newtid = $con->query($sql, array(':nid' => $nid))->fetchColumn();
+  $currtids = $con->query($sql, array(':nid' => $nid))->fetchCol();
+  $stop = TRUE;
+  $ref_tid = array();
+  $out_tid = 0;
+  $level = 0;
+
+  foreach ($currtids as $tid) {
+    $term = \Drupal::service('entity_type.manager')->getStorage('taxonomy_term')->load($tid);
+    $cnt = 0;
+    $level = triage_term_depth($term->tid);
+    $fld = $configvals['triage_ref_field'];
+    if (isset($term->$fld)) {
+      $thisfld = $term->$fld;
+      if (isset($thisfld['und'][0])) {
+        $ref_tid[$cnt]['tid'] = $thisfld['und'][0]['tid'];
+        $ref_tid[$cnt]['level'] = $level;
+        $ref_tid[$cnt]['name'] = $term->name;
+        $cnt++;
+      }
+      if (in_array($term->tid, $allowtids) && $only_popup) {
+        $stop = FALSE;
+      }
+    }
+  }
+  if ($stop){
+    if ($configvals['triage_use_parents_in_popup']) {
+      foreach ($currtids as $tid) {
+        $terms = taxonomy_get_parents_all($tid);
+        foreach ($terms as $term) {
+          $cnt = 0;
+
+          $level = triage_term_depth($term->tid);
+          $fld = $configvals['triage_ref_field'];
+          if (isset($term->$fld)) {
+            if (in_array($term->tid, $allowtids) && $only_popup) {
+              $thisfld = $term->$fld;
+              if (isset($thisfld['und'][0])) {
+                $ref_tid[$cnt]['tid'] = $thisfld['und'][0]['tid'];
+                $ref_tid[$cnt]['level'] = $level;
+                $ref_tid[$cnt]['name'] = $term->name;
+                $cnt++;
+              }
+              $stop = FALSE;
+            }
+          }
+        }
+      }
+    }
+  }
+  if ($ref_tid) {
+    $out_tid = $ref_tid[0]['tid'];
+    $level = $ref_tid[0]['level'];
+    $last = $ref_tid[0]['name'];
+  }
+  foreach ($ref_tid as $xtid) {
+    if ($xtid['level'] > $level) {
+      $level = $xtid['level'];
+      $out_tid = $xtid['tid'];
+      $last = $xtid['name'];
+    }
+  }
+  if ($stop) {
+    return "";
+  }
+  if ($out_tid) {
+    $url .= "/" . $out_tid;
+  }
+  else {
+    $url = '';
+  }
+  switch ($whatvalue) {
+    case 'url':
+      return $url;
+      break;
+    case 'name':
+      return $last;
+      break;
+    default:
+      return "";
+  }
+}
+
+function triage_vocs() {
+  $con = Database::getConnection();
+  $qry = $con->select('ta_variable', 't');
+  $qry->addField('t', 'value');
+  $qry->condition('t.name', "triage_vocabulary");
+  $vals = $qry->execute();
+  $vocs = [];
+  foreach ($vals as $val) {
+    $sr = unserialize($val->value);
+    $voc = Vocabulary::load($sr);
+    $name = "";
+    if ($voc) {
+      $name = $voc->get('name');
+      $vocs[$sr] = $name;
+    }
+
+  }
+  return $vocs;
+}
+
+function triage_admin() {
+  $con = Database::getConnection();
+  $block = "";
+  $m1 = '/triage_actions_admin';
+  $m2 = '/triage_reuse';
+  $m6 = '/admin/reports/triage/triage_summary';
+  $m7 = '/admin/triage_configuration';
+  $m8 = 'https://bdsworks.org/triage-text-doc';
+  $instances = '';
+  $triage_nids = $con->query('select distinct nid from ta_variable')
+    ->fetchCol();
+  foreach ($triage_nids as $nid) {
+    $vid = ta_variable_get('triage_vocabulary', '', $nid);
+    $voc = Vocabulary::load($vid);
+    if (!$voc) {
+      continue;
+    }
+    $instances .= "<li>" . $voc->get('name') . "<ul>";
+    $ref = '/admin/structure/taxonomy_manager/voc/' . $vid;
+    $name = "Manage " . $voc->get('name') . " Tree";
+    $instances .= "<li><a href='" . $ref . "'>" . $name . "</a></li>";
+    $ref = "/triage/" . $vid;
+    $name = "Run " . $voc->get('name');
+    $instances .= "<li><a href='" . $ref . "'>" . $name . "</a></li>";
+    $ref = "/node/" . $nid . "/edit";
+    $node = \Drupal\node\Entity\Node::load($nid);
+    $name = 'Edit ' . $node->getTitle() . ' Page';
+    $instances .= "<li><a href='" . $ref . "'>" . $name . "</a></li>";
+    $instances .= "</ul></li>";
+  }
+  $ctext = "<h2 class='triage-admin'>Triage Admin Menu</h2>";
+  $ctext .= "<div class='triage-admin'>";
+  $ctext .= "<ul class='triage-choices'>
+                <li >Triage Instances<ul>" . $instances . "</ul></li>
+                <li><a href='" . $m1 . "'>Triage Action Management</a></li>
+                <li><a href='" . $m2 . "'>Action Text Editor</a></li>
+                <li><a href='" . $m6 . "'>Triage Summary Report</a></li>
+                <li><a href='" . $m7 . "'>Overall Triage Configuration</a></li>
+                <li><a href='" . $m8 . "'>Triage Documentation</a></li>
+            </ul>";
+  $ctext .= "</div>";
+  return $ctext;
+
+}
+
+function triage_del() {
+  $msg = "";
+  $con = Database::getConnection();
+  $tempstore = \Drupal::service('tempstore.private')->get('triage');
+  $data = $_POST;
+  $id = key($data);
+  $kids = $con->query('select id from triage_actions where pid=:pid', [':pid' => $id])
+    ->fetchCol();
+  $name = $con->query('select title from triage_actions where id=:id', [':id' => $id])
+    ->fetchColumn();
+  $type = $con->query('select type from triage_actions where id=:id', [':id' => $id])
+    ->fetchColumn();
+  $reuse = $con->query('select reusable_text from triage_actions where id=:id', [':id' => $id])
+    ->fetchColumn();
+  $reuses = NULL;
+  if ($reuse) {
+    $query = $con->select('triage_actions', 'ta');
+    $query->fields('ta', ['id']);
+    $query->condition('node_ref_nid', $id)
+      ->condition('type', 'reuse');
+    $reuses = $query->execute();
+  }
+  if ($kids) {
+    $msg = "<div class='popmsg'>Triage action '" . trim($name) . "' has dependent items which will also be deleted</div>";
+    $msg .= "<div class='popbtns'>";
+    $msg .= "<div class='popup-confirm'><button tabindex='0' id = 'del-" . $id . "' class=  'delbutton'>Delete All</button></div>";
+    $msg .= "<div class='popup-cancel'><button  tabindex='0' class= 'cancelbutton'>Cancel</button></div>";
+    $msg .= "</div></div>";
+  }
+  elseif ($reuses) {
+    $msg = "<div class='popmsg'>Reusable text '" . trim($name) . "' is used by other items, which will also be deleted</div>";
+    $msg .= "<div class='popbtns'>";
+    $msg .= "<div class='popup-confirm'><button tabindex='0' id = 'del-" . $id . "' class=  'delbutton'>Delete All</button></div>";
+    $msg .= "<div class='popup-cancel'><button tabindex='0' class= 'cancelbutton'>Cancel</button></div>";
+    $msg .= "</div></div>";
+  }
+  else {
+    $msg = "<div class='popmsg'>Delete triage action '" . trim($name) . "'?";
+    $msg .= "<div class='popbtns'>";
+    $msg .= "<div class='popup-confirm'><button id = 'del-" . $id . "' class=  'delbutton'>Delete</button></div>";
+    $msg .= "<div class='popup-cancel'><button class= 'cancelbutton'>Cancel</button></div>";
+    $msg .= "</div></div>";
+  }
+  return $msg;
+}
+
+function triage_del_actions($id = NULL) {
+  if (!$id) {
+    return;
+  }
+  $con = Database::getConnection();
+  $kids = $con->query('select id from triage_actions where pid=:pid', [':pid' => $id])
+    ->fetchCol();
+  $name = $con->query('select title from triage_actions where id=:id', [':id' => $id])
+    ->fetchColumn();
+  $reuse = $con->query('select reusable_text from triage_actions where id=:id', [':id' => $id])
+    ->fetchColumn();
+  foreach ($kids as $kid) {
+    $con->delete('triage_actions')
+      ->condition('id', $kid)
+      ->execute();
+  }
+  if ($reuse) {
+    $query = $con->select('triage_actions', 'ta');
+    $query->fields('ta', ['id']);
+    $query->condition('node_ref_nid', $id)
+      ->condition('type', 'reuse');
+    $res = $query->execute();
+    foreach ($res as $re) {
+      $con->delete('triage_actions')
+        ->condition('id', $re)
+        ->execute();
+    }
+  }
+  $con->delete('triage_actions')
+    ->condition('id', $id)
+    ->execute();
+  // dpm('Triage Action ' . $name . ' Deleted');
+}
+
+function triage_actions_reusable_admin() {
+  GLOBAL $base_url;
+  $con = Database::getConnection();
+  $tempstore = \Drupal::service('tempstore.private')->get('triage');
+  $vid = $tempstore->get('triage_actions_admin_voc');
+  $cp = \Drupal::service('path.current')->getPath();
+  $tempstore->set('triage_return_to', $cp);
+  $key = $tempstore->get('triage_reusable_filter');
+  $language = \Drupal::languageManager()->getCurrentLanguage();
+  $node = triage_get_page($vid);
+  $nid = $node->id();
+  $lang = $language->getId();
+  $parent = $tempstore->get('triage_actions_admin_parent');
+  $output = "<div>";
+  //$output .= '<h4>Triage Reusable Text Editor</h4>';
+  $form = \Drupal::formBuilder()
+    ->getForm('\Drupal\\triage\Form\\triage_action_admin_reuse_form');
+  $output .= \Drupal::service('renderer')->render($form);
+  $output .= "</div>";
+  $sub1 = $con->select('taxonomy_term_field_data', 't');
+  $sub1->addField('t', 'tid', 'entity_id');
+  $sub1->condition('t.vid', $vid);
+  //  $sub2 = db_select('field_data_field_triage_tree', 'n');
+  //  $sub2->addField('n', 'entity_id');
+  //  $sub2->condition('n.field_triage_tree_value', $vid);
+  $query = $con->select('triage_actions', 'ta');
+  $query->fields('ta', ['id', 'title', 'action_text', 'reusable_text']);
+  $or = $query->orConditionGroup()
+    ->condition('ta.entity_id', $sub1, "IN")
+    ->condition('ta.entity_id', $nid)
+    ->condition('ta.entity_id', 0);
+  $query->condition($or);
+  $query->condition('type', 'text')
+    ->condition('language', $lang)
+    ->condition($or)
+    ->orderBy('title');
+  if ($tempstore->get('triage_reusable_text_only')) {
+    $query->condition('reusable_text', 1);
+  }
+  if (trim($key) > '') {
+    $or2 = $query->orConditionGroup()
+      ->condition('action_text', "%" . $key . "%", 'LIKE')
+      ->condition('title', "%" . $key . "%", 'LIKE');
+    $query->condition($or2);
+  }
+  // $bds = dpq($query, TRUE);
+  $acts = $query->execute();
+  $rows = [];
+  foreach ($acts as $act) {
+    $icon = '';
+    $class = "class='transbutton2' title='Translations incomplete - click to add translations'";
+    //    if (triage_actions_trans2complete($act->id)) {
+    //      $class = "class='transbutton2 transcomplete' title='Click to edit existing translations'";
+    //    }
+    if ($act->reusable_text) {
+      $icon = '<i class="fa fa-cog triage_action_red_text" title="Reusable Text"></i> ';
+    }
+
+    //    $rows[] = array(
+    //      $icon,
+    //      $act->title,
+    //      substr(strip_tags($act->action_text), 0, 300),
+    //      "<a href='taxonomy/actions/" . $act->id . "/text/edit'>Edit</a>",
+    //      "<a href='triage_actions_delete/" . $act->id . "/1'>Delete</a>",
+    //      "<a " . $class . " href='" . $base_url . "/triage_actions_translate/" . $act->id . "'>Translate</a>",
+    //    );
+    $rows[] = [
+      Markup::create($icon),
+      $act->title,
+      Markup::create(substr(strip_tags($act->action_text), 0, 300)),
+      Markup::create("<a href='/taxonomy/actions/" . $act->id . "/text/edit/1' >Edit</a>"),
+      Markup::create("<button tabindex='0' class='del-row' id='del" . $act->id . "' >Delete</button>"),
+      Markup::create("<a " . $class . " href='" . $base_url . "/triage_actions_translate/" . $act->id . "' >Translate</a>"),
+    ];
+  }
+  $header = [
+    '',
+    t('Title'),
+    t('Text'),
+    t('Edit'),
+    t('Delete'),
+    t('Translate'),
+  ];
+  $output .= "<div id='triage-actions'>";
+  $table = [
+    '#theme' => 'table',
+    '#header' => $header,
+    '#rows' => $rows,
+  ];
+  $output .= \Drupal::service('renderer')->render($table);
+  $output .= "</div>";
+  return $output;
+}
+
+function triage_search() {
+  return "";
+}
+
+function triage_restart() {
+  $tempstore = \Drupal::service('tempstore.private')->get('triage');
+  $nid = $tempstore->get('triage_page_nid');
+  $start_text = ta_variable_get('triage_restart_text', 'Start Again', $nid);
+  $output = "<div class='triage-restart noprint'>" . t($start_text) . "</div>";
+  return $output;
+}
+
+function triage_tax_list($vals = NULL) {
+  if(!$vals){
+    return "";
+  }
+  $con = Database::getConnection();
+  $text = '';
+  if (count($vals) > 0) {
+    if (implode(",", $vals) == '') {
+
+    }
+    else {
+      $sql = 'select name from taxonomy_term_field_data 
+                  where tid in (' . implode(",", $vals) . ')';
+      $facs = $con->query($sql)->fetchCol();
+      foreach ($facs as $fac) {
+        $text .= $fac . "\n";
+      }
+    }
+  }
+  return $text;
+}

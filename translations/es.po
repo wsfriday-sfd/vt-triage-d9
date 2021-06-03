@@ -1,0 +1,37 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: Example event\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "Please choose the issue you need help with."
+msgstr "Por favor, elija el problema que necesita ayuda."
+
+msgid "Select the statement that best describes your legal problem."
+msgstr "Seleccione la declaración que mejor describa su problema legal."
+
+msgid "You said"
+msgstr "Usted dijo"
+
+msgid "Your Legal Help"
+msgstr "Su ayuda legal"
+
+msgid "Legal Category"
+msgstr "Categoría legal"
+
+msgid "My Answers"
+msgstr "Mis respuestas"
+
+msgid "Start Again"
+msgstr "Comenzar nuevamente"
+
+msgid "Email"
+msgstr "Correo electrónico"
+
+msgid "Print"
+msgstr "Imprimir"
+
+msgid "Submit"
+msgstr "Enviar"

@@ -1,0 +1,12 @@
+triage:
+  version: 1.0
+  css:
+    layout:
+      triage.css: {preprocess: true}
+
+  js:
+    triage.js: {preprocess: false}
+  dependencies:
+    - core/jquery
+    - core/jquery.cookie
+    - core/drupalSettings

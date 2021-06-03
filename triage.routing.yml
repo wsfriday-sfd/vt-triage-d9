@@ -1,0 +1,193 @@
+triage.triage:
+  path: '/triage/{voc_name}/{thistid}/{return_js}/{groupid}'
+  defaults:
+     _controller: '\Drupal\triage\Controller\triageController::triage'
+     _title_callback: '\Drupal\triage\Controller\triageController::getTriageTitle'
+     voc_name: NULL
+     thistid: NULL
+     return_js: 0
+     groupid: 0
+  requirements:
+      _permission: 'access content'
+triage.triageconfig:
+  path: '/node/{node}/triage-config'
+  defaults:
+     _title: 'Triage Configuration'
+     _form: '\Drupal\triage\Form\TriageConfigForm'
+  requirements:
+    _permission: 'administer triage settings'
+    _custom_access: '\Drupal\triage\Access\TriageAccessController::checkTriageAccess'
+  options:
+    _admin_route: TRUE
+triage.node.actions:
+  path: '/node/{node}/actions'
+  defaults:
+     _title: 'Triage Action Builder'
+     _controller: '\Drupal\triage\Controller\triageController::triage_node_actions'
+     type: 'node'
+  requirements:
+    _permission: 'administer triage settings'
+    _custom_access: '\Drupal\triage\Access\TriageAccessController::checkTriageAccess'
+  options:
+    _admin_route: TRUE
+triage.node.build:
+  path: '/node/{node}/actions/build'
+  defaults:
+     _title: 'Triage Action Help Builder'
+     _controller: '\Drupal\triage\Controller\triageController::triage_node_actions'
+     type: 'quest'
+  requirements:
+    _permission: 'administer triage settings'
+  options:
+    _admin_route: TRUE
+triage.node.quest:
+  path: '/node/{node}/actions/quest'
+  defaults:
+     _title: 'Triage Action Help Builder'
+     _controller: '\Drupal\triage\Controller\triageController::triage_node_actions'
+     type: 'quests'
+  requirements:
+    _permission: 'administer triage settings'
+  options:
+    _admin_route: TRUE
+triage.node.help:
+  path: '/node/{node}/actions/help'
+  defaults:
+     _title: 'Triage Output Builder'
+     _controller: '\Drupal\triage\Controller\triageController::triage_node_actions'
+     type: 'help'
+  requirements:
+    _permission: 'administer triage settings'
+  options:
+    _admin_route: TRUE
+triage.triage_actions_process:
+  path: '/triage_actions_process/{tid}/{preview}'
+  defaults:
+    _controller: '\Drupal\triage\Controller\triageController::triage_actions_process'
+    _title: 'Help for Your Legal Problem'
+    preview: 0
+  requirements:
+    _permission: 'access content'
+triage.triage_post:
+  path: '/triage-post'
+  defaults:
+    _controller: '\Drupal\triage\Controller\triageController::triage_post'
+    _title: 'Post Triage Data'
+  requirements:
+    _permission: 'access content'
+triage.triage_nothanks:
+  path: '/triage_nothanks'
+  defaults:
+    _controller: '\Drupal\triage\Controller\triageController::triage_nothanks'
+    _title: 'Post Triage Popup Preference'
+  requirements:
+    _permission: 'access content'
+triage.triage_write_hist:
+  path: '/triage_write_hist'
+  defaults:
+    _controller: '\Drupal\triage\Controller\triageController::triage_write_hist'
+    _title: 'Write Triage History Data'
+  requirements:
+    _permission: 'access content'
+triage.triage_del:
+  path: '/triage_del'
+  defaults:
+    _controller: '\Drupal\triage\Controller\triageController::triage_del'
+    _title: 'Delete Triage Action Builder Data'
+  requirements:
+    _permission: 'administer triage settings'
+triage.triage_delete:
+  path: '/triage_delete'
+  defaults:
+    _controller: '\Drupal\triage\Controller\triageController::triage_delete'
+    _title: 'Delete Triage Action Builder Data'
+  requirements:
+    _permission: 'administer triage settings'
+triage.triage_actions_admin:
+  path: '/triage_actions_admin'
+  defaults:
+     _controller: '\Drupal\triage\Controller\triageController::triage_actions_admin'
+     _title: 'Manage Triage Vocabularies and their Endpoints'
+  requirements:
+    _permission: 'administer triage settings'
+  options:
+    _admin_route: TRUE
+triage.actions:
+  path: '/taxonomy/term/{term}/actions'
+  defaults:
+     _title: 'Triage Action Builders'
+     _form: '\Drupal\triage\Form\triage_actions_form'
+  requirements:
+    _permission: 'administer triage settings'
+  options:
+    _admin_route: TRUE
+triage.actions.translate:
+  path: '/triage_actions_translate/{id}'
+  defaults:
+    _controller: '\Drupal\triage\Controller\triageController::triage_actions_translate'
+    _title: 'Translate Triage Action'
+    id: 0
+  requirements:
+    _permission: 'administer triage settings'
+  options:
+    _admin_route: TRUE
+triage.actions.edit:
+  path: '/taxonomy/actions/{id}/{type}/edit/{reuseit}/{lang}'
+  defaults:
+    _controller: '\Drupal\triage\Controller\triageController::triage_actions_editor'
+    _title: 'Triage Action Editor'
+    reuseit: 0
+    lang: 'en'
+  requirements:
+    _permission: 'administer triage settings'
+  options:
+    _admin_route: TRUE
+triage.autocomplete:
+  path: '/triage_auto'
+  defaults:
+    _controller: '\Drupal\triage\Controller\triageController::triage_autocomplete'
+    _format: json
+  requirements:
+    _access: 'TRUE'
+triage_action.delete:
+  path: '/triage_action/{id}/delete'
+  defaults:
+    _form: '\Drupal\triage\Form\triage_confirm_delete'
+    _title: 'Confirm Deletion'
+  requirements:
+    _permission: 'administer triage settings'
+    id: ^\d+$
+triage.summary:
+  path: '/admin/reports/triage/triage_summary'
+  defaults:
+    _controller: '\Drupal\triage\Controller\triageController::triage_summary_report'
+    _title: 'Triage Summary Report'
+  requirements:
+    _permission: 'administer triage settings'
+triage.config:
+  path: '/admin/triage_configuration'
+  defaults:
+     _title: 'Triage Configuration'
+     _form: '\Drupal\triage\Form\triage_settings_form'
+  requirements:
+    _permission: 'administer triage settings'
+  options:
+    _admin_route: TRUE
+triage.admin:
+  path: '/triage_admin'
+  defaults:
+    _controller: '\Drupal\triage\Controller\triageController::triage_admin'
+    _title: 'Triage Administration'
+  requirements:
+    _permission: 'administer triage settings'
+  options:
+    _admin_route: TRUE
+triage.reuse_admin:
+  path: '/triage_reuse'
+  defaults:
+    _controller: '\Drupal\triage\Controller\triageController::triage_reuse'
+    _title: 'Triage Text Editor'
+  requirements:
+    _permission: 'administer triage settings'
+  options:
+    _admin_route: TRUE

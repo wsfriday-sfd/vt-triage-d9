@@ -1,0 +1,499 @@
+<?php
+use Drupal\Core\Database\Database;
+
+function triage_schema(){
+    $database = \Drupal::database();
+    if(!$database->schema()->tableExists('triage_suggestions')) {
+        $schema['triage_suggestions'] = array(
+            'description' => 'TODO: please describe this table!',
+            'fields' => array(
+                'id' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'serial',
+                    'unsigned' => TRUE,
+                    'size' => 'big',
+                    'not null' => TRUE,
+                ),
+                'text' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'varchar',
+                    'length' => '400',
+                    'not null' => FALSE,
+                    'default' => ' ',
+                ),
+                'timestamp' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'int',
+                    'not null' => FALSE,
+                    'default' => 0,
+                ),
+                'ip' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'varchar',
+                    'length' => '20',
+                    'not null' => FALSE,
+                ),
+            ),
+            'primary key' => array('id'),
+            'unique keys' => array(
+                'id' => array('id')
+            ),
+            'indexes' => array(
+                'timestamp' => array('timestamp', 'ip'),
+            ),
+        );
+    }
+    if(!$database->schema()->tableExists('triage_actions')) {
+        $schema['triage_actions'] = array(
+            'description' => 'TODO: please describe this table!',
+            'fields' => array(
+                'id' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'serial',
+                    'unsigned' => TRUE,
+                    'not null' => TRUE,
+                ),
+                'bundle' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'varchar',
+                    'length' => '255',
+                    'not null' => TRUE,
+                ),
+                'entity_id' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'int',
+                    'unsigned' => TRUE,
+                    'not null' => TRUE,
+                    'default' => 0,
+                ),
+                'title' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'varchar',
+                    'length' => '255',
+                    'not null' => TRUE,
+                ),
+                'display_header' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'varchar',
+                    'length' => '255',
+                    'not null' => TRUE,
+                    'default' => '',
+                ),
+                'type' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'varchar',
+                    'length' => '20',
+                    'not null' => FALSE,
+                ),
+                'weight' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'int',
+                    'not null' => TRUE,
+                    'default' => 0,
+                ),
+                'pid' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'int',
+                    'not null' => TRUE,
+                    'default' => 0,
+                ),
+                'language' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'varchar',
+                    'length' => '12',
+                    'not null' => TRUE,
+                ),
+                'action_text' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'text',
+                    'size' => 'big',
+                    'not null' => FALSE,
+                ),
+                'action_text_format' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'varchar',
+                    'length' => '255',
+                    'not null' => TRUE,
+                    'default' => '2',
+                ),
+                'reusable_text' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'int',
+                    'size' => 'tiny',
+                    'not null' => TRUE,
+                    'default' => 0,
+                ),
+                'node_ref_nid' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'int',
+                    'not null' => FALSE,
+                ),
+                'node_view_opt' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'varchar',
+                    'length' => '25',
+                    'not null' => FALSE,
+                    'default' => 'full',
+                ),
+                'trim_length' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'int',
+                    'not null' => TRUE,
+                    'default' => 350,
+                ),
+                'show_income' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'text',
+                    'not null' => FALSE,
+                ),
+                'hide_income' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'text',
+                    'not null' => FALSE,
+                ),
+                'show_status' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'text',
+                    'not null' => FALSE,
+                ),
+                'hide_status' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'text',
+                    'not null' => FALSE,
+                ),
+                'show_county' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'text',
+                    'not null' => FALSE,
+                ),
+                'hide_county' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'text',
+                    'not null' => FALSE,
+                ),
+                'show_tax' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'text',
+                    'not null' => FALSE,
+                ),
+                'hide_tax' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'text',
+                    'not null' => FALSE,
+                ),
+                'show_benefits' => array(
+                    'description' => 'Show content for these benefit codes',
+                    'type' => 'text',
+                    'not null' => FALSE,
+                ),
+                'hide_benefits' => array(
+                    'description' => 'Hide content for these benefit codes',
+                    'type' => 'text',
+                    'not null' => FALSE,
+                ),
+                'region' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'varchar',
+                    'length' => '64',
+                    'not null' => FALSE,
+                    'default' => 'ta-main-panel',
+                ),
+                'classes' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'text',
+                    'not null' => FALSE,
+                ),
+                'extra' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'text',
+                    'not null' => FALSE,
+                ),
+                'oldid' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'int',
+                    'not null' => FALSE,
+                ),
+                'intake_elig' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'int',
+                    'size' => 'tiny',
+                    'not null' => FALSE,
+                ),
+                'uuid' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'char',
+                    'length' => '36',
+                    'not null' => FALSE,
+                ),
+                'enabled' => array(
+                    'description' => 'Flags whether the triage action is available',
+                    'type' => 'int',
+                    'size' => 'tiny',
+                    'not null' => TRUE,
+                    'default' => 1,
+                ),
+
+
+            ),
+            'primary key' => array('id', 'language'),
+            'indexes' => array(
+                'bundle' => array('bundle'),
+                'intake_elig' => array('intake_elig'),
+                'node_ref_nid' => array('node_ref_nid'),
+                'pid' => array('pid'),
+                'tid' => array('entity_id', 'title', 'type', 'weight', 'language'),
+                'enabled' => array('enabled'),
+            ),
+        );
+    }
+    if(!$database->schema()->tableExists('triage_log')) {
+        $schema['triage_log'] = array(
+            'description' => 'TODO: please describe this table!',
+            'fields' => array(
+                'id' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'serial',
+                    'unsigned' => TRUE,
+                    'size' => 'big',
+                    'not null' => TRUE,
+                ),
+                'vid' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'int',
+                    'not null' => FALSE,
+                ),
+                'ip' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'varchar',
+                    'length' => '20',
+                    'not null' => FALSE,
+                ),
+                'ssid' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'varchar',
+                    'length' => '128',
+                    'not null' => FALSE,
+                ),
+                'history' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'text',
+                    'not null' => FALSE,
+                ),
+                'time_end' => array(
+                    'description' => 'Time finished triage',
+                    'type' => 'int',
+                    'not null' => FALSE,
+                ),
+                'steps' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'int',
+                    'not null' => FALSE,
+                    'default' => 0,
+                ),
+                'last_stop' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'text',
+                    'not null' => FALSE,
+                ),
+                'completed' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'int',
+                    'size' => 'tiny',
+                    'not null' => FALSE,
+                ),
+                'non_service_area' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'int',
+                    'not null' => FALSE,
+                ),
+                'zipcode' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'varchar',
+                    'length' => '10',
+                    'not null' => FALSE,
+                ),
+                'county' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'varchar',
+                    'length' => '25',
+                    'not null' => FALSE,
+                ),
+                'household' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'int',
+                    'not null' => TRUE,
+                    'default' => 0,
+                ),
+                'income' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'int',
+                    'not null' => TRUE,
+                    'default' => 0,
+                ),
+                'pov' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'int',
+                    'not null' => TRUE,
+                    'default' => 0,
+                ),
+                'bank' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'int',
+                    'not null' => TRUE,
+                    'default' => 0,
+                ),
+                'status' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'text',
+                    'not null' => FALSE,
+                ),
+                'tid' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'int',
+                    'not null' => FALSE,
+                ),
+                'other_cat' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'varchar',
+                    'length' => '128',
+                    'not null' => FALSE,
+                ),
+                'intake_elig' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'int',
+                    'size' => 'tiny',
+                    'not null' => FALSE,
+                ),
+                'email' => array(
+                    'description' => 'Results sent to email',
+                    'type' => 'int',
+                    'size' => 'tiny',
+                    'not null' => FALSE,
+                ),
+                'help' => array(
+                    'description' => 'Kind of Help Wanted',
+                    'type' => 'varchar',
+                    'length' => '50',
+                    'not null' => FALSE,
+                ),
+                'benefits' => array(
+                    'description' => 'Type of benefits received',
+                    'type' => 'text',
+                    'not null' => FALSE,
+                ),
+                'factors' => array(
+                    'description' => 'Other factors affecting search',
+                    'type' => 'text',
+                    'not null' => FALSE,
+                ),
+                'aggregate' => array(
+                    'description' => 'Aggregate',
+                    'type' => 'int',
+                    'not null' => FALSE,
+                ),
+                'author' => array(
+                    'description' => 'Triage for self or other',
+                    'type' => 'int',
+                    'not null' => FALSE,
+                ),
+                'time' => array(
+                    'description' => 'Time Triage begun',
+                    'type' => 'int',
+                    'not null' => FALSE,
+                ),
+            ),
+            'primary key' => array('id'),
+            'indexes' => array(
+                'completed' => array('completed'),
+                'county' => array('county'),
+                'intake_elig' => array('intake_elig'),
+                'ip' => array('ip'),
+                'steps' => array('steps'),
+                'time' => array('time'),
+                'time_end' => array('time_end'),
+                'vid' => array('vid'),
+                'ssid' => array('ssid'),
+                'non_service_area' => array('non_service_area'),
+                'help' => array('help'),
+                'email' => array('email'),
+            ),
+        );
+    }
+    if(!$database->schema()->tableExists('ta_variable')) {
+        $schema['ta_variable'] = array(
+            'description' => 'TODO: please describe this table!',
+            'fields' => array(
+                'name' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'varchar',
+                    'length' => '128',
+                    'not null' => TRUE,
+                    'default' => '',
+                ),
+                'value' => array(
+                    'description' => 'The value of the variable.',
+                    'type' => 'blob',
+                    'size' => 'big',
+                    'not null' => TRUE,
+                ),
+                'nid' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'int',
+                    'not null' => FALSE,
+                ),
+            ),
+        );
+    }
+    if(!$database->schema()->tableExists('citydata')) {
+        $schema['citydata'] = array(
+            'description' => 'TODO: please describe this table!',
+            'fields' => array(
+                'id' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'serial',
+                    'unsigned' => TRUE,
+                    'size' => 'big',
+                    'not null' => TRUE,
+                ),
+                'cityid' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'varchar',
+                    'length' => '20',
+                    'not null' => FALSE,
+                ),
+                'namecity' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'varchar',
+                    'length' => '50',
+                    'not null' => FALSE,
+                ),
+                'stateid' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'varchar',
+                    'length' => '2',
+                    'not null' => FALSE,
+                ),
+                'zipcode' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'char',
+                    'length' => '5',
+                    'not null' => FALSE,
+                ),
+                'county' => array(
+                    'description' => 'TODO: please describe this field!',
+                    'type' => 'char',
+                    'length' => '25',
+                    'not null' => FALSE,
+                ),
+            ),
+            'primary key' => array('id'),
+            'unique keys' => array(
+                'id' => array('id')
+            ),
+            'indexes' => array(
+                'cityid' => array('cityid'),
+            ),
+        );
+    }
+    return $schema;
+}
